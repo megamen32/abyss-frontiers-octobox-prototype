@@ -27,10 +27,12 @@ export class Game {
   private currentChunk = { x: 0, y: 0, z: 0 };
   private running = false;
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
+  private debugUiVisible: boolean = GAME_CONFIG.visuals.debugEnabled;
   private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private fogEnabled = true;
   private lastFrameTime = 0;
   private fps = 60;
+  private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
 
@@ -41,7 +43,6 @@ export class Game {
     this.render.setFogEnabled(this.fogEnabled);
     this.render.hud.setCallbacks({
       onRestart: () => this.restart(),
-      onToggleDebug: () => this.toggleDebug(),
     });
   }
 
@@ -68,6 +69,16 @@ export class Game {
   private toggleDebug(): void {
     this.debugEnabled = !this.debugEnabled;
     this.render.setDebugEnabled(this.debugEnabled);
+    if (!this.debugEnabled) {
+      this.debugUiVisible = false;
+      this.render.setDebugUiVisible(false);
+    }
+  }
+
+  private toggleDebugUi(): void {
+    if (!this.debugEnabled) return;
+    this.debugUiVisible = !this.debugUiVisible;
+    this.render.setDebugUiVisible(this.debugUiVisible);
   }
 
   private toggleChunkDebug(): void {
@@ -78,6 +89,10 @@ export class Game {
   private toggleFog(): void {
     this.fogEnabled = !this.fogEnabled;
     this.render.setFogEnabled(this.fogEnabled);
+  }
+
+  private togglePause(): void {
+    this.paused = !this.paused;
   }
 
   private loop = (timestamp: number): void => {
@@ -104,29 +119,38 @@ export class Game {
     if (input.fogTogglePressed) {
       this.toggleFog();
     }
+    if (input.debugUiTogglePressed) {
+      this.toggleDebugUi();
+    }
+    if (input.pausePressed) {
+      this.togglePause();
+    }
     this.profiler.addSample('inputMs', performance.now() - inputStart);
 
-    const simulationStart = performance.now();
-    const tuning = applyRuntimeTuning(input);
-    applyKeyboardSteering(this.player, input, dt);
-    updatePlayer(this.player, dt);
-    this.profiler.addSample('simulationMs', performance.now() - simulationStart);
+    let tuning = applyRuntimeTuning(input);
+    if (!this.paused) {
+      const simulationStart = performance.now();
+      applyKeyboardSteering(this.player, input, dt);
+      updatePlayer(this.player, dt);
+      this.profiler.addSample('simulationMs', performance.now() - simulationStart);
 
-    const chunkSyncStart = performance.now();
-    const travel = travelDirection(this.player);
-    const sync = this.chunkManager.syncAround(this.player.position, travel, this.player.speed);
-    this.currentChunk = sync.currentCoord;
-    this.render.syncChunks(sync.added, sync.removed);
-    this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
+      const chunkSyncStart = performance.now();
+      const travel = travelDirection(this.player);
+      const sync = this.chunkManager.syncAround(this.player.position, travel, this.player.speed);
+      this.currentChunk = sync.currentCoord;
+      this.render.syncChunks(sync.added, sync.removed);
+      this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
 
-    const worldStart = performance.now();
-    this.updateWorld(dt);
-    this.profiler.addSample('worldMs', performance.now() - worldStart);
-    this.spawnBudget.recordFrame(rawDt, this.fps);
+      const worldStart = performance.now();
+      this.updateWorld(dt);
+      this.profiler.addSample('worldMs', performance.now() - worldStart);
+      this.spawnBudget.recordFrame(rawDt, this.fps);
+    }
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const renderStart = performance.now();
     this.render.updateFrame({
+      paused: this.paused,
       player: this.player,
       chunks: this.chunkManager.activeChunks.values(),
       fps: this.fps,

@@ -17,173 +17,191 @@ interface HudSnapshot {
   dangerAccent: string;
   tuning: RuntimeFlightTuning;
   debugEnabled: boolean;
+  debugUiVisible: boolean;
   chunkDebugEnabled: boolean;
   fogEnabled: boolean;
   spawnBudget: number;
   averageFps: number;
   timings: DebugTimingSnapshot;
   dead: boolean;
+  paused: boolean;
 }
 
 export class Hud {
   private readonly root: HTMLDivElement;
-  private readonly stats = {
-    hp: document.createElement('span'),
-    loot: document.createElement('span'),
-    fps: document.createElement('span'),
-    seed: document.createElement('span'),
-    coord: document.createElement('span'),
-    distance: document.createElement('span'),
-    depth: document.createElement('span'),
-    speed: document.createElement('span'),
-    drift: document.createElement('span'),
-  };
-  private readonly depthBand = document.createElement('span');
-  private readonly dangerValue = document.createElement('span');
-  private readonly stallValue = document.createElement('span');
-  private readonly tuningReadout = document.createElement('div');
-  private readonly timingReadout = document.createElement('div');
+
+  private readonly depthValue = document.createElement('span');
+  private readonly depthBandEl = document.createElement('span');
   private readonly depthGaugeFill = document.createElement('div');
-  private readonly debugButton = document.createElement('button');
+  private readonly hpValue = document.createElement('span');
+  private readonly hpGaugeFill = document.createElement('div');
+  private readonly stallValue = document.createElement('span');
+  private readonly lootValue = document.createElement('span');
+
+  private readonly debugPanel = document.createElement('div');
+  private readonly debugContent = document.createElement('div');
+  private readonly debugTimings = document.createElement('div');
+  private readonly debugTuning = document.createElement('div');
+  private readonly keyHints = document.createElement('div');
+
   private readonly restartButton = document.createElement('button');
   private readonly deathOverlay = document.createElement('div');
+  private readonly pauseOverlay = document.createElement('div');
+
   private onRestart: (() => void) | null = null;
-  private onToggleDebug: (() => void) | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
     this.root.className = 'hud';
 
-    const top = document.createElement('div');
-    top.className = 'hud-top';
+    const topLeft = document.createElement('div');
+    topLeft.className = 'hud-tl';
 
-    const panel = document.createElement('div');
-    panel.className = 'panel';
-    panel.innerHTML = '<h1>Abyss Frontiers</h1>';
-    const depthOverview = document.createElement('div');
-    depthOverview.className = 'depth-overview';
-    depthOverview.innerHTML = `
-      <div class="depth-readout">
-        <span class="depth-kicker">Depth Band</span>
-      </div>
-      <div class="danger-readout">
-        <span class="depth-kicker">Hazard</span>
-      </div>
-      <div class="depth-gauge">
-        <div class="depth-gauge-track"></div>
-      </div>
-    `;
-    depthOverview.querySelector('.depth-readout')?.append(this.depthBand, this.stats.depth);
-    depthOverview.querySelector('.danger-readout')?.append(this.dangerValue, this.stallValue);
-    this.depthGaugeFill.className = 'depth-gauge-fill';
-    depthOverview.querySelector('.depth-gauge')?.append(this.depthGaugeFill);
-    const stats = document.createElement('div');
-    stats.className = 'stats';
-    stats.append(
-      this.stat('HP', this.stats.hp),
-      this.stat('Loot', this.stats.loot),
-      this.stat('FPS', this.stats.fps),
-      this.stat('Seed', this.stats.seed),
-      this.stat('Speed', this.stats.speed),
-      this.stat('Drift', this.stats.drift),
-      this.stat('Chunk', this.stats.coord),
-      this.stat('Distance', this.stats.distance),
-    );
-    panel.append(depthOverview, stats);
+    const playerCard = document.createElement('div');
+    playerCard.className = 'player-card';
 
-    const controls = document.createElement('div');
-    controls.className = 'controls';
+    const gauges = document.createElement('div');
+    gauges.className = 'gauges';
+
+    const depthCol = document.createElement('div');
+    depthCol.className = 'gauge-col';
+    this.depthValue.className = 'gauge-value depth-val';
+    this.depthBandEl.className = 'gauge-sub';
+    const depthGauge = document.createElement('div');
+    depthGauge.className = 'mini-gauge';
+    this.depthGaugeFill.className = 'mini-gauge-fill';
+    depthGauge.append(this.depthGaugeFill);
+    depthCol.append(this.depthValue, this.depthBandEl, depthGauge);
+
+    const hpCol = document.createElement('div');
+    hpCol.className = 'gauge-col';
+    this.hpValue.className = 'gauge-value hp-val';
+    const hpLabel = document.createElement('span');
+    hpLabel.className = 'gauge-sub';
+    hpLabel.textContent = 'HP';
+    const hpGauge = document.createElement('div');
+    hpGauge.className = 'mini-gauge';
+    this.hpGaugeFill.className = 'mini-gauge-fill hp-fill';
+    hpGauge.append(this.hpGaugeFill);
+    hpCol.append(this.hpValue, hpLabel, hpGauge);
+
+    const stallCol = document.createElement('div');
+    stallCol.className = 'gauge-col stall-col';
+    this.stallValue.className = 'stall-badge calm';
+
+    const lootCol = document.createElement('div');
+    lootCol.className = 'gauge-col loot-col';
+    this.lootValue.className = 'gauge-value loot-val';
+    const lootLabel = document.createElement('span');
+    lootLabel.className = 'gauge-sub';
+    lootLabel.textContent = 'Loot';
+    lootCol.append(this.lootValue, lootLabel);
+
+    gauges.append(depthCol, hpCol, stallCol, lootCol);
+    playerCard.append(gauges);
+
+    this.debugPanel.className = 'debug-panel';
+    this.debugContent.className = 'debug-content';
+    this.debugTimings.className = 'debug-line';
+    this.debugTuning.className = 'debug-line';
+    this.debugPanel.append(this.debugContent, this.debugTimings, this.debugTuning);
+
+    this.keyHints.className = 'key-hints';
+    this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause';
+
+    topLeft.append(playerCard, this.debugPanel, this.keyHints);
+
+    const bottomRight = document.createElement('div');
+    bottomRight.className = 'hud-br';
+    this.restartButton.className = 'restart-btn';
     this.restartButton.textContent = 'Restart';
     this.restartButton.addEventListener('click', () => this.onRestart?.());
-    this.debugButton.className = 'secondary';
-    this.debugButton.addEventListener('click', () => this.onToggleDebug?.());
-    const hint = document.createElement('div');
-    hint.className = 'hint';
-    hint.textContent = 'A/D yaw the thrust, W/S pitch it, inertia keeps the hull drifting, hard deflections can stall the flow. Z toggles debug, C toggles chunk debug, F toggles fog.';
-    this.tuningReadout.className = 'tuning-readout';
-    this.timingReadout.className = 'tuning-readout';
-    controls.append(this.restartButton, this.debugButton, hint, this.tuningReadout, this.timingReadout);
-
-    top.append(panel, controls);
-
-    const bottom = document.createElement('div');
-    bottom.className = 'hud-bottom';
-    const status = document.createElement('div');
-    status.className = 'status-strip';
-    status.textContent = 'Click the viewport to lock cursor and steer the camera.';
-    bottom.append(status);
+    bottomRight.append(this.restartButton);
 
     this.deathOverlay.className = 'death-overlay';
     this.deathOverlay.style.display = 'none';
     this.deathOverlay.innerHTML = `
       <div class="death-card">
         <h2>Run Lost</h2>
-        <p>The abyss kept the hull. Restart to replay the same deterministic seed.</p>
+        <p>The abyss kept the hull.</p>
         <div class="death-stats"></div>
-        <button>Restart Run</button>
+        <button>Restart</button>
       </div>
     `;
     this.deathOverlay.querySelector('button')?.addEventListener('click', () => this.onRestart?.());
 
-    this.root.append(top, bottom, this.deathOverlay);
+    this.pauseOverlay.className = 'pause-overlay';
+    this.pauseOverlay.style.display = 'none';
+    this.pauseOverlay.innerHTML = `
+      <div class="pause-card">
+        <h2>Paused</h2>
+        <p>Press Escape to resume</p>
+      </div>
+    `;
+
+    this.root.append(topLeft, bottomRight, this.deathOverlay, this.pauseOverlay);
     parent.append(this.root);
   }
 
-  setCallbacks(callbacks: { onRestart: () => void; onToggleDebug: () => void }): void {
+  setCallbacks(callbacks: { onRestart: () => void }): void {
     this.onRestart = callbacks.onRestart;
-    this.onToggleDebug = callbacks.onToggleDebug;
   }
 
-  render(snapshot: HudSnapshot): void {
-    this.stats.hp.textContent = `${snapshot.hp}`;
-    this.stats.loot.textContent = `${snapshot.loot}`;
-    this.stats.fps.textContent = `${snapshot.fps.toFixed(0)}`;
-    this.stats.seed.textContent = `${snapshot.seed}`;
-    this.stats.coord.textContent = `${snapshot.coord.x}, ${snapshot.coord.y}, ${snapshot.coord.z}`;
-    this.stats.distance.textContent = `${snapshot.distance.toFixed(1)}`;
-    this.stats.depth.textContent = `${Math.max(0, snapshot.depth).toFixed(0)} m`;
-    this.stats.speed.textContent = `${snapshot.speed.toFixed(1)}`;
-    this.stats.drift.textContent = `${snapshot.driftAngleDeg.toFixed(0)}°`;
-    this.depthBand.textContent = snapshot.depthBand;
-    this.dangerValue.textContent = `${Math.round(snapshot.dangerLevel * 100)}%`;
-    this.stallValue.textContent = snapshot.stallAmount >= 0.7 ? 'STALL' : snapshot.stallAmount >= 0.35 ? 'SLIP' : 'FLOW';
-    this.stallValue.className = snapshot.stallAmount >= 0.7 ? 'stall-warning hot' : snapshot.stallAmount >= 0.35 ? 'stall-warning warm' : 'stall-warning calm';
-    this.depthGaugeFill.style.setProperty('--depth-fill', `${(snapshot.dangerLevel * 100).toFixed(1)}%`);
-    this.depthGaugeFill.style.setProperty('--depth-accent', snapshot.dangerAccent);
-    this.debugButton.textContent = snapshot.debugEnabled ? 'Hide Debug' : 'Show Debug';
-    this.tuningReadout.textContent =
-      `Accel +/- ${snapshot.tuning.baseAcceleration.toFixed(1)}  Drag [] ${snapshot.tuning.baseDrag.toFixed(2)}`
-      + `  Turn ;' ${snapshot.tuning.turnInputSpeed.toFixed(2)}  Spawn/frame ${snapshot.spawnBudget}`
-      + `  Avg FPS ${snapshot.averageFps.toFixed(1)}  Chunk Debug ${snapshot.chunkDebugEnabled ? 'ON' : 'OFF'}`
-      + `  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`
-      + `  Calls ${snapshot.timings.drawCalls.toFixed(0)}  Tris ${snapshot.timings.drawTriangles.toFixed(0)}`;
-    this.timingReadout.textContent =
-      `Frame ${snapshot.timings.frameMs.toFixed(1)}ms  Input ${snapshot.timings.inputMs.toFixed(1)}`
-      + `  Sim ${snapshot.timings.simulationMs.toFixed(1)}  Sync ${snapshot.timings.chunkSyncMs.toFixed(1)}`
-      + `  World ${snapshot.timings.worldMs.toFixed(1)}  Render ${snapshot.timings.renderMs.toFixed(1)}`
-      + `  Hydrate ${snapshot.timings.hydrateMs.toFixed(1)}  ReadyQ ${snapshot.timings.readyQueueMs.toFixed(1)}`
-      + `  Worker ${snapshot.timings.workerTotalMs.toFixed(1)}  Octo ${snapshot.timings.workerOctoboxMs.toFixed(1)}`
-      + `  Serialize ${snapshot.timings.workerSerializeMs.toFixed(1)}`
-      + `  Lines ${snapshot.timings.drawLines.toFixed(0)}  Points ${snapshot.timings.drawPoints.toFixed(0)}`;
-    this.timingReadout.textContent +=
-      `  SpawnQ ${snapshot.timings.renderSpawnQueueMs.toFixed(1)}  MeshUpd ${snapshot.timings.renderChunkUpdateMs.toFixed(1)}`
-      + `  Debug ${snapshot.timings.renderDebugMs.toFixed(1)}  CamHUD ${snapshot.timings.renderHudCameraMs.toFixed(1)}`
-      + `  Draw ${snapshot.timings.renderDrawMs.toFixed(1)}`;
-    this.tuningReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
-    this.timingReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
+  render(s: HudSnapshot): void {
+    this.depthValue.textContent = `${Math.max(0, s.depth).toFixed(0)}m`;
+    this.depthBandEl.textContent = s.depthBand;
+    this.depthGaugeFill.style.setProperty('--fill', `${(s.dangerLevel * 100).toFixed(1)}%`);
+    this.depthGaugeFill.style.setProperty('--accent', s.dangerAccent);
+
+    const hpPct = Math.max(0, Math.min(100, s.hp));
+    this.hpValue.textContent = `${Math.round(s.hp)}`;
+    this.hpGaugeFill.style.setProperty('--fill', `${hpPct}%`);
+    this.hpValue.style.color = s.hp <= 30 ? '#ff8f6a' : s.hp <= 60 ? '#ffd071' : '';
+
+    const stall = s.stallAmount;
+    this.stallValue.textContent = stall >= 0.7 ? 'STALL' : stall >= 0.35 ? 'SLIP' : '';
+    this.stallValue.className = 'stall-badge ' + (stall >= 0.7 ? 'hot' : stall >= 0.35 ? 'warm' : 'calm');
+
+    this.lootValue.textContent = `${s.loot}`;
+
+    const showDebug = s.debugEnabled && s.debugUiVisible;
+    this.debugPanel.style.display = showDebug ? 'block' : 'none';
+    this.keyHints.style.display = s.debugEnabled ? 'block' : 'none';
+
+    if (showDebug) {
+      this.debugContent.textContent =
+        `${s.fps.toFixed(0)} fps  ` +
+        `${s.speed.toFixed(1)} spd  ` +
+        `${s.driftAngleDeg.toFixed(0)}° drift  ` +
+        `seed ${s.seed}  ` +
+        `chunk ${s.coord.x},${s.coord.y},${s.coord.z}  ` +
+        `dist ${s.distance.toFixed(1)}  ` +
+        `budget ${s.spawnBudget}  ` +
+        `avg ${s.averageFps.toFixed(1)}  ` +
+        `fog ${s.fogEnabled ? 'ON' : 'OFF'}  ` +
+        `chunkdbg ${s.chunkDebugEnabled ? 'ON' : 'OFF'}`;
+      this.debugTimings.textContent =
+        `frame ${s.timings.frameMs.toFixed(1)}  ` +
+        `sim ${s.timings.simulationMs.toFixed(1)}  ` +
+        `sync ${s.timings.chunkSyncMs.toFixed(1)}  ` +
+        `render ${s.timings.renderMs.toFixed(1)}  ` +
+        `calls ${s.timings.drawCalls}  ` +
+        `tris ${s.timings.drawTriangles}  ` +
+        `chunks ${s.timings.visibleChunks}  ` +
+        `worker ${s.timings.workerTotalMs.toFixed(1)}`;
+      this.debugTuning.textContent =
+        `accel ${s.tuning.baseAcceleration.toFixed(1)}  ` +
+        `drag ${s.tuning.baseDrag.toFixed(2)}  ` +
+        `turn ${s.tuning.turnInputSpeed.toFixed(2)}  ` +
+        `octo ${s.timings.workerOctoboxMs.toFixed(1)}  ` +
+        `mesh ${s.timings.workerStaticMeshMs.toFixed(1)}`;
+    }
 
     const deathStats = this.deathOverlay.querySelector('.death-stats');
     if (deathStats) {
-      deathStats.innerHTML = `Loot: ${snapshot.loot}<br>Distance: ${snapshot.distance.toFixed(1)}<br>Seed: ${snapshot.seed}`;
+      deathStats.innerHTML = `Loot: ${s.loot}<br>Depth: ${Math.max(0, s.depth).toFixed(0)}m<br>Distance: ${s.distance.toFixed(1)}`;
     }
-    this.deathOverlay.style.display = snapshot.dead ? 'grid' : 'none';
-  }
-
-  private stat(label: string, valueNode: HTMLElement): HTMLElement {
-    const wrapper = document.createElement('div');
-    const labelNode = document.createElement('strong');
-    labelNode.textContent = label;
-    wrapper.append(labelNode, valueNode);
-    return wrapper;
+    this.deathOverlay.style.display = s.dead ? 'grid' : 'none';
+    this.pauseOverlay.style.display = s.paused && !s.dead ? 'grid' : 'none';
   }
 }

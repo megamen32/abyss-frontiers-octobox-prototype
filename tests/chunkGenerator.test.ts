@@ -30,6 +30,8 @@ function testInput(overrides: Partial<InputState> = {}): InputState {
     debugTogglePressed: false,
     chunkDebugTogglePressed: false,
     fogTogglePressed: false,
+    debugUiTogglePressed: false,
+    pausePressed: false,
     ...overrides,
   };
 }

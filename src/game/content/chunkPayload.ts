@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import type { ChunkData, ChunkCoord, LeafCell, Loot, Mine, Obstacle, Portal } from '../types';
+import type { ChunkData, ChunkCoord, LeafCell, Loot, Mine, Obstacle, Portal, StaticChunkMeshData } from '../types';
 
 export interface SerializedChunkData {
   key: string;
@@ -22,6 +22,7 @@ export interface SerializedChunkData {
     neighbor: ChunkCoord;
   }>;
   adjacency: [string, string][];
+  staticMeshData?: StaticChunkMeshData;
   obstacles: Array<{
     id: string;
     type: Obstacle['type'];
@@ -86,6 +87,7 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
       neighbor: portal.neighbor,
     })),
     adjacency: chunk.adjacency,
+    staticMeshData: chunk.staticMeshData,
     obstacles: chunk.obstacles.map((obstacle) => ({
       id: obstacle.id,
       type: obstacle.type,
@@ -151,6 +153,7 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
       neighbor: portal.neighbor,
     })),
     adjacency: data.adjacency,
+    staticMeshData: data.staticMeshData,
     obstacles: data.obstacles.map((obstacle) => ({
       id: obstacle.id,
       type: obstacle.type,

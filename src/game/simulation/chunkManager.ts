@@ -3,7 +3,6 @@ import { GAME_CONFIG } from '../config';
 import type { ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, ChunkSyncResult } from '../types';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { chunkGenerationRadius } from '../utils/visibility';
-import { ChunkGenerator } from '../content/chunkGenerator';
 import { hydrateChunk } from '../content/chunkPayload';
 
 interface ChunkWorkerResponse {
@@ -15,24 +14,23 @@ interface ChunkWorkerResponse {
 
 export class ChunkManager {
   readonly activeChunks = new Map<string, ChunkData>();
-  private readonly generator: ChunkGenerator;
   private readonly workers: Worker[];
   private readonly seed: number;
   private readonly pendingKeys = new Set<string>();
   private readonly wantedKeys = new Set<string>();
   private readonly readyQueue: ChunkData[] = [];
-  private readonly debugTimings: Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerSerializeMs'> = {
+  private readonly debugTimings: Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs'> = {
     hydrateMs: 0,
     readyQueueMs: 0,
     workerTotalMs: 0,
     workerOctoboxMs: 0,
+    workerStaticMeshMs: 0,
     workerSerializeMs: 0,
   };
   private roundRobinIndex = 0;
 
   constructor(seed: number) {
     this.seed = seed;
-    this.generator = new ChunkGenerator(seed);
     this.workers = Array.from({ length: GAME_CONFIG.world.chunkBuildWorkers }, () => {
       const worker = new Worker(new URL('../content/chunkWorker.ts', import.meta.url), { type: 'module' });
       worker.addEventListener('message', this.handleWorkerMessage);
@@ -50,16 +48,10 @@ export class ChunkManager {
       const key = chunkKey(coord);
       wanted.add(key);
       if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
-        if (this.activeChunks.size === 0 && this.pendingKeys.size === 0 && key === chunkKey(currentCoord)) {
-          const chunk = this.generator.generate(coord);
-          this.activeChunks.set(key, chunk);
-          added.push(chunk);
-        } else {
-          this.pendingKeys.add(key);
-          const worker = this.workers[this.roundRobinIndex % this.workers.length];
-          this.roundRobinIndex += 1;
-          worker.postMessage({ type: 'generate', seed: this.seed, coord });
-        }
+        this.pendingKeys.add(key);
+        const worker = this.workers[this.roundRobinIndex % this.workers.length];
+        this.roundRobinIndex += 1;
+        worker.postMessage({ type: 'generate', seed: this.seed, coord });
       }
     }
 
@@ -90,7 +82,7 @@ export class ChunkManager {
     return { added, removed, currentCoord };
   }
 
-  consumeDebugTimings(): Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerSerializeMs'> {
+  consumeDebugTimings(): Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs'> {
     return { ...this.debugTimings };
   }
 
@@ -108,6 +100,7 @@ export class ChunkManager {
     this.pendingKeys.delete(event.data.key);
     this.debugTimings.workerTotalMs = smoothTiming(this.debugTimings.workerTotalMs, event.data.timings.totalMs);
     this.debugTimings.workerOctoboxMs = smoothTiming(this.debugTimings.workerOctoboxMs, event.data.timings.octoboxMs);
+    this.debugTimings.workerStaticMeshMs = smoothTiming(this.debugTimings.workerStaticMeshMs, event.data.timings.staticMeshMs);
     this.debugTimings.workerSerializeMs = smoothTiming(this.debugTimings.workerSerializeMs, event.data.timings.serializeMs);
     const hydrateStart = performance.now();
     const chunk = hydrateChunk(event.data.chunk);

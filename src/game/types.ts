@@ -6,6 +6,41 @@ export type ObstacleMotion = 'static' | 'slow_rotate' | 'linear_drift';
 export type CellKind = 'free' | 'obstacle' | 'empty';
 export type GenerationMode = 'scatter' | 'cave';
 export type MineState = 'idle' | 'targeting' | 'launched' | 'dead';
+export type GauntletType =
+  | 'left_passage'
+  | 'right_passage'
+  | 'center_ring'
+  | 'rotating_cylinders'
+  | 'slalom'
+  | 'squeeze'
+  | 'cross_bars';
+
+export interface CavePathNode {
+  position: Vector3;
+  radius: number;
+}
+
+export interface CaveTunnel {
+  id: string;
+  nodes: CavePathNode[];
+  gauntletType: GauntletType;
+  children: CaveTunnel[];
+  depth: number;
+}
+
+export interface CaveSample {
+  position: Vector3;
+  tangent: Vector3;
+  normal: Vector3;
+  binormal: Vector3;
+  radius: number;
+}
+
+export interface CaveSystem {
+  seed: number;
+  entrancePosition: Vector3;
+  mainTunnel: CaveTunnel;
+}
 
 export interface ChunkCoord {
   x: number;
@@ -78,6 +113,12 @@ export interface Mine {
   telegraphTimer: number;
 }
 
+export interface StaticChunkMeshData {
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+}
+
 export interface ChunkData {
   key: string;
   coord: ChunkCoord;
@@ -87,6 +128,7 @@ export interface ChunkData {
   portals: Portal[];
   adjacency: [string, string][];
   obstacles: Obstacle[];
+  staticMeshData?: StaticChunkMeshData;
   loot: Loot[];
   mines: Mine[];
 }
@@ -102,6 +144,7 @@ export interface ChunkBuildTimings {
   octoboxMs: number;
   navigationMs: number;
   obstaclesMs: number;
+  staticMeshMs: number;
   lootMs: number;
   minesMs: number;
   serializeMs: number;
@@ -123,11 +166,14 @@ export interface DebugTimingSnapshot {
   readyQueueMs: number;
   workerTotalMs: number;
   workerOctoboxMs: number;
+  workerStaticMeshMs: number;
   workerSerializeMs: number;
   drawCalls: number;
   drawTriangles: number;
   drawLines: number;
   drawPoints: number;
+  visibleChunks: number;
+  staticMeshChunks: number;
 }
 
 export interface InputState {
@@ -142,6 +188,8 @@ export interface InputState {
   debugTogglePressed: boolean;
   chunkDebugTogglePressed: boolean;
   fogTogglePressed: boolean;
+  debugUiTogglePressed: boolean;
+  pausePressed: boolean;
 }
 
 export interface CameraState {

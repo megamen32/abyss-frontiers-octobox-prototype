@@ -9,6 +9,8 @@ export class InputController {
   private debugLatched = false;
   private chunkDebugLatched = false;
   private fogLatched = false;
+  private debugUiLatched = false;
+  private pauseLatched = false;
 
   constructor(private readonly target: Window) {
     target.addEventListener('keydown', this.handleKeyDown);
@@ -33,6 +35,8 @@ export class InputController {
       debugTogglePressed: this.debugLatched,
       chunkDebugTogglePressed: this.chunkDebugLatched,
       fogTogglePressed: this.fogLatched,
+      debugUiTogglePressed: this.debugUiLatched,
+      pausePressed: this.pauseLatched,
     };
     this.accelerationAdjustLatched = 0;
     this.dragAdjustLatched = 0;
@@ -41,6 +45,8 @@ export class InputController {
     this.debugLatched = false;
     this.chunkDebugLatched = false;
     this.fogLatched = false;
+    this.debugUiLatched = false;
+    this.pauseLatched = false;
     return state;
   }
 
@@ -60,6 +66,14 @@ export class InputController {
     if (event.code === 'KeyF') {
       event.preventDefault();
       this.fogLatched = true;
+    }
+    if (event.code === 'KeyU') {
+      event.preventDefault();
+      this.debugUiLatched = true;
+    }
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      this.pauseLatched = true;
     }
     if (event.code === 'Equal' || event.code === 'NumpadAdd') {
       event.preventDefault();

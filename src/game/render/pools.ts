@@ -2,9 +2,7 @@ import {
   BufferGeometry,
   BoxGeometry,
   Color,
-  DynamicDrawUsage,
   Group,
-  InstancedMesh,
   Line,
   LineBasicMaterial,
   Mesh,
@@ -95,13 +93,6 @@ export class RenderPools {
     },
     12,
   );
-
-  createBoxObstacleBatch(capacity: number): InstancedMesh {
-    const mesh = new InstancedMesh(this.boxObstacleGeometry, this.boxObstacleMaterial, Math.max(1, capacity));
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    mesh.count = 0;
-    return mesh;
-  }
 
   releaseObjects(items: Object3D[]): void {
     for (const item of items) {

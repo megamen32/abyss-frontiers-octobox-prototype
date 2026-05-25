@@ -5,15 +5,13 @@ import {
   BoxGeometry,
   Color,
   DirectionalLight,
+  Euler,
   FogExp2,
   Group,
-  InstancedMesh,
-  Matrix4,
   MathUtils,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
-  Quaternion,
   Scene,
   SphereGeometry,
   Line,
@@ -30,21 +28,21 @@ import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import { fogChunkRenderRadius, fogVisibilityDistance } from '../utils/visibility';
+import { PerformanceCapture } from '../diagnostics/performanceCapture';
+import { createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
+import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
 
 type PooledChunkObject = Group | Mesh;
 type ChunkRenderGroup = {
   chunk: ChunkData;
+  renderObstacles: Obstacle[];
   group: Group;
-  debug: Group;
+  debug: Group | null;
   pooled: PooledChunkObject[];
-  boxObstacleBatch: InstancedMesh | null;
-  activeBoxObstacleCount: number;
+  staticMesh: Mesh | null;
   coord: ChunkCoord;
   spawnCursor: number;
 };
-
-const INSTANCE_MATRIX = new Matrix4();
-const IDENTITY_QUATERNION = new Quaternion();
 
 export class RenderApp {
   readonly hud: Hud;
@@ -61,6 +59,7 @@ export class RenderApp {
   private readonly renderer = new WebGLRenderer({ antialias: true });
   private readonly world = new Group();
   private readonly pools = new RenderPools();
+  private readonly performanceCapture = new PerformanceCapture();
   private readonly debugRenderer = new DebugRenderer();
   private readonly chunkGroups = new Map<string, ChunkRenderGroup>();
   private readonly playerMesh = new Group();
@@ -73,10 +72,20 @@ export class RenderApp {
     GAME_CONFIG.world.spawn.y,
     GAME_CONFIG.world.spawn.z,
   );
+  // Smoothed look-at target — lerped each frame to prevent teleportation when
+  // the ship pitches/yaws sharply.
+  private readonly cameraLookAt = new Vector3(
+    GAME_CONFIG.world.spawn.x,
+    GAME_CONFIG.world.spawn.y,
+    GAME_CONFIG.world.spawn.z + GAME_CONFIG.camera.lookAheadMin,
+  );
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
+  private debugUiVisible = false;
   private fogEnabled = true;
   private pointerLocked = false;
+  /** World-space points (boss, explosion, etc.) that must also be visible. */
+  private externalFocusPoints: Vector3[] = [];
 
   constructor(parent: HTMLElement) {
     this.shell.className = 'shell';
@@ -102,6 +111,11 @@ export class RenderApp {
 
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
+    for (const chunk of this.chunkGroups.values()) {
+      this.releaseChunkObjects(chunk);
+      chunk.staticMesh?.geometry.dispose();
+    }
+    this.chunkGroups.clear();
     this.renderer.dispose();
   }
 
@@ -113,8 +127,21 @@ export class RenderApp {
     this.simulationRadiusHelper.visible = enabled;
   }
 
+  setDebugUiVisible(visible: boolean): void {
+    this.debugUiVisible = visible;
+  }
+
   setChunkDebugEnabled(enabled: boolean): void {
     this.chunkDebugEnabled = enabled;
+  }
+
+  /**
+   * Pass world-space points (boss position, explosion centre, etc.) that the
+   * camera should keep in frame alongside the ship.  Pass an empty array to
+   * clear.  The camera will zoom out as needed to frame everything.
+   */
+  setExternalFocusPoints(points: Vector3[]): void {
+    this.externalFocusPoints = points.map(p => p.clone());
   }
 
   setFogEnabled(enabled: boolean): void {
@@ -131,29 +158,32 @@ export class RenderApp {
         continue;
       }
       this.releaseChunkObjects(existing);
+      existing.staticMesh?.geometry.dispose();
       this.world.remove(existing.group);
-      this.world.remove(existing.debug);
+      if (existing.debug) {
+        this.world.remove(existing.debug);
+      }
       this.chunkGroups.delete(key);
     }
 
     for (const chunk of added) {
       const group = new Group();
-      const boxObstacleCapacity = chunk.obstacles.filter((obstacle) => obstacle.type === 'box').length;
-      const boxObstacleBatch = boxObstacleCapacity > 0 ? this.pools.createBoxObstacleBatch(boxObstacleCapacity) : null;
-      if (boxObstacleBatch) {
-        group.add(boxObstacleBatch);
+      const staticMesh = createStaticChunkMesh(chunk, this.pools.boxObstacleMaterial);
+      if (staticMesh) {
+        group.add(staticMesh);
       }
-      const debug = this.debugRenderer.createChunkDebug(chunk);
-      debug.visible = this.debugEnabled && this.chunkDebugEnabled;
+      const debug = this.debugEnabled && this.chunkDebugEnabled ? this.debugRenderer.createChunkDebug(chunk) : null;
       this.world.add(group);
-      this.world.add(debug);
+      if (debug) {
+        this.world.add(debug);
+      }
       this.chunkGroups.set(chunk.key, {
         chunk,
+        renderObstacles: chunk.obstacles.filter((obstacle) => !isRepresentedByStaticChunkMesh(chunk, obstacle)),
         group,
         debug,
         pooled: [],
-        boxObstacleBatch,
-        activeBoxObstacleCount: 0,
+        staticMesh,
         coord: chunk.coord,
         spawnCursor: 0,
       });
@@ -161,6 +191,7 @@ export class RenderApp {
   }
 
   updateFrame(frame: {
+    paused: boolean;
     player: PlayerState;
     chunks: Iterable<ChunkData>;
     fps: number;
@@ -188,7 +219,9 @@ export class RenderApp {
       this.cameraState.pitch = MathUtils.lerp(this.cameraState.pitch, orientation.pitch * 0.65, autoBlend);
     }
     this.playerMesh.position.copy(frame.player.position);
-    this.playerMesh.rotation.set(orientation.pitch, orientation.yaw, 0);
+    this.playerMesh.quaternion.setFromEuler(
+      new Euler(-orientation.pitch, orientation.yaw, 0, 'YXZ'),
+    );
     this.playerRadius.position.copy(frame.player.position);
     this.playerRadius.visible = this.debugEnabled;
 
@@ -197,7 +230,19 @@ export class RenderApp {
     renderTimings.renderSpawnQueueMs = performance.now() - spawnQueueStart;
 
     const chunkUpdateStart = performance.now();
+    let visibleChunks = 0;
+    let staticMeshChunks = 0;
     for (const chunkRender of this.chunkGroups.values()) {
+      const visible = this.shouldRenderChunk(chunkRender, frame.player);
+      if (chunkRender.staticMesh) {
+        chunkRender.staticMesh.visible = visible;
+      }
+      if (visible) {
+        visibleChunks += 1;
+        if (chunkRender.staticMesh) {
+          staticMeshChunks += 1;
+        }
+      }
       this.updateChunkMeshes(chunkRender);
     }
     renderTimings.renderChunkUpdateMs = performance.now() - chunkUpdateStart;
@@ -213,9 +258,39 @@ export class RenderApp {
     const cameraOffset = new Vector3(0, GAME_CONFIG.camera.height, -GAME_CONFIG.camera.distance)
       .applyAxisAngle(new Vector3(1, 0, 0), this.cameraState.pitch)
       .applyAxisAngle(new Vector3(0, 1, 0), this.cameraState.yaw);
-    const desiredCamera = this.cameraFocus.clone().add(cameraOffset);
-    this.camera.position.lerp(desiredCamera, 1 - Math.exp(-6 * GAME_CONFIG.camera.smoothness));
-    this.camera.lookAt(this.cameraFocus.clone().add(desiredLookDirection.multiplyScalar(18)));
+
+    // Smooth the look-at target so sharp pitch/yaw changes don't teleport the view.
+    // Distance scales with speed (1 second of travel) so fast flight opens up the view.
+    const lookAheadDist = Math.max(
+      GAME_CONFIG.camera.lookAheadMin,
+      frame.player.speed * GAME_CONFIG.camera.lookAheadSeconds,
+    );
+    const desiredLookAt = frame.player.position.clone()
+      .addScaledVector(desiredLookDirection, lookAheadDist);
+    const lookBlend = 1 - Math.exp(-5 * GAME_CONFIG.camera.smoothness);
+    this.cameraLookAt.lerp(desiredLookAt, lookBlend);
+
+    // Must-see world-space points: ship anchors + any external focus points.
+    const mustSeePoints = this.buildMustSeePoints(frame.player);
+
+    const { position: desiredCameraPos } = computeCameraRig({
+      cameraLookAt: { x: this.cameraLookAt.x, y: this.cameraLookAt.y, z: this.cameraLookAt.z },
+      cameraBasePosition: {
+        x: this.cameraFocus.x + cameraOffset.x,
+        y: this.cameraFocus.y + cameraOffset.y,
+        z: this.cameraFocus.z + cameraOffset.z,
+      },
+      mustSeePoints,
+      fovDegrees: GAME_CONFIG.camera.fov,
+      aspect: this.camera.aspect,
+      viewMargin: GAME_CONFIG.camera.viewMargin,
+    });
+
+    this.camera.position.lerp(
+      new Vector3(desiredCameraPos.x, desiredCameraPos.y, desiredCameraPos.z),
+      1 - Math.exp(-6 * GAME_CONFIG.camera.smoothness),
+    );
+    this.camera.lookAt(this.cameraLookAt);
 
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
 
@@ -227,6 +302,9 @@ export class RenderApp {
     renderTimings.drawTriangles = this.renderer.info.render.triangles;
     renderTimings.drawLines = this.renderer.info.render.lines;
     renderTimings.drawPoints = this.renderer.info.render.points;
+    renderTimings.visibleChunks = visibleChunks;
+    renderTimings.staticMeshChunks = staticMeshChunks;
+    this.performanceCapture.record(frame.fps, renderTimings);
     this.hud.render({
       hp: frame.player.hp,
       loot: frame.player.loot,
@@ -243,35 +321,23 @@ export class RenderApp {
       dangerAccent: frame.dangerAccent,
       tuning: frame.tuning,
       debugEnabled: this.debugEnabled,
+      debugUiVisible: this.debugUiVisible,
       chunkDebugEnabled: this.chunkDebugEnabled,
       fogEnabled: frame.fogEnabled,
       spawnBudget: frame.spawnBudget,
       averageFps: frame.averageFps,
       timings: renderTimings,
       dead: !frame.player.alive,
+      paused: frame.paused,
     });
   }
 
   private updateChunkMeshes(chunkRender: ChunkRenderGroup): void {
     let pooledIndex = 0;
-    let boxInstanceIndex = 0;
     const spawnedCount = chunkRender.spawnCursor;
     for (let index = 0; index < spawnedCount; index += 1) {
-      const target = this.chunkObjectAt(chunkRender.chunk, index);
+      const target = this.chunkObjectAt(chunkRender, index);
       if (!target) {
-        continue;
-      }
-      if (target.kind === 'obstacle' && target.data.type === 'box') {
-        if (!target.data.size) {
-          continue;
-        }
-        INSTANCE_MATRIX.compose(
-          target.data.position,
-          IDENTITY_QUATERNION,
-          target.data.size,
-        );
-        chunkRender.boxObstacleBatch?.setMatrixAt(boxInstanceIndex, INSTANCE_MATRIX);
-        boxInstanceIndex += 1;
         continue;
       }
       const object = chunkRender.pooled[pooledIndex];
@@ -331,11 +397,6 @@ export class RenderApp {
       }
     }
 
-    if (chunkRender.boxObstacleBatch) {
-      chunkRender.activeBoxObstacleCount = boxInstanceIndex;
-      chunkRender.boxObstacleBatch.count = boxInstanceIndex;
-      chunkRender.boxObstacleBatch.instanceMatrix.needsUpdate = true;
-    }
   }
 
   private processChunkSpawnQueue(player: PlayerState, spawnBudget: number): void {
@@ -345,7 +406,7 @@ export class RenderApp {
         if (!shouldRender && chunk.pooled.length > 0) {
           this.releaseChunkObjects(chunk);
         }
-        return shouldRender && chunk.spawnCursor < this.chunkObjectCount(chunk.chunk);
+        return shouldRender && chunk.spawnCursor < this.chunkObjectCount(chunk);
       })
       .sort((left, right) => this.chunkSpawnPriority(right, player) - this.chunkSpawnPriority(left, player));
 
@@ -353,7 +414,7 @@ export class RenderApp {
     while (remaining > 0) {
       let spawnedAny = false;
       for (const chunk of candidates) {
-        if (remaining <= 0 || chunk.spawnCursor >= this.chunkObjectCount(chunk.chunk)) {
+        if (remaining <= 0 || chunk.spawnCursor >= this.chunkObjectCount(chunk)) {
           continue;
         }
         this.spawnNextChunkObject(chunk);
@@ -397,13 +458,8 @@ export class RenderApp {
   }
 
   private spawnNextChunkObject(chunkRender: ChunkRenderGroup): void {
-    const target = this.chunkObjectAt(chunkRender.chunk, chunkRender.spawnCursor);
+    const target = this.chunkObjectAt(chunkRender, chunkRender.spawnCursor);
     if (!target) {
-      return;
-    }
-
-    if (target.kind === 'obstacle' && target.data.type === 'box') {
-      chunkRender.spawnCursor += 1;
       return;
     }
 
@@ -433,26 +489,22 @@ export class RenderApp {
     }
     chunkRender.pooled = [];
     chunkRender.spawnCursor = 0;
-    chunkRender.activeBoxObstacleCount = 0;
-    if (chunkRender.boxObstacleBatch) {
-      chunkRender.boxObstacleBatch.count = 0;
-      chunkRender.boxObstacleBatch.instanceMatrix.needsUpdate = true;
-    }
   }
 
-  private chunkObjectCount(chunk: ChunkData): number {
-    return chunk.obstacles.length + chunk.loot.length + chunk.mines.length;
+  private chunkObjectCount(chunkRender: ChunkRenderGroup): number {
+    return chunkRender.renderObstacles.length + chunkRender.chunk.loot.length + chunkRender.chunk.mines.length;
   }
 
-  private chunkObjectAt(chunk: ChunkData, index: number):
+  private chunkObjectAt(chunkRender: ChunkRenderGroup, index: number):
     | { kind: 'obstacle'; data: Obstacle }
     | { kind: 'loot'; data: Loot }
     | { kind: 'mine'; data: ChunkData['mines'][number] }
     | null {
-    if (index < chunk.obstacles.length) {
-      return { kind: 'obstacle', data: chunk.obstacles[index] };
+    const chunk = chunkRender.chunk;
+    if (index < chunkRender.renderObstacles.length) {
+      return { kind: 'obstacle', data: chunkRender.renderObstacles[index] };
     }
-    const lootIndex = index - chunk.obstacles.length;
+    const lootIndex = index - chunkRender.renderObstacles.length;
     if (lootIndex < chunk.loot.length) {
       return { kind: 'loot', data: chunk.loot[lootIndex] };
     }
@@ -522,6 +574,14 @@ export class RenderApp {
     this.cameraFocus.lerp(targetFocus, followBlend);
   }
 
+  private buildMustSeePoints(player: PlayerState): { x: number; y: number; z: number }[] {
+    const forward = { x: player.forward.x, y: player.forward.y, z: player.forward.z };
+    const ship = { x: player.position.x, y: player.position.y, z: player.position.z };
+    const worldAnchors = shipAnchorsToWorld(ship, forward, GAME_CONFIG.camera.shipViewAnchors as unknown as { x: number; y: number; z: number }[]);
+    const external = this.externalFocusPoints.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    return [...worldAnchors, ...external];
+  }
+
   private updateChunkRadiusHelpers(chunkCoord: { x: number; y: number; z: number }): void {
     this.updateChunkRadiusHelper(this.visibleRadiusHelper, chunkCoord, fogChunkRenderRadius());
     this.updateChunkRadiusHelper(this.interactiveRadiusHelper, chunkCoord, GAME_CONFIG.world.interactiveRadius);
@@ -552,10 +612,17 @@ export class RenderApp {
   private updateDebugChunkVisibility(currentCoord: ChunkCoord): void {
     const debugRadius = GAME_CONFIG.visuals.debugChunkRadius;
     for (const chunk of this.chunkGroups.values()) {
-      chunk.debug.visible =
+      const visible =
         this.debugEnabled
         && this.chunkDebugEnabled
         && chunkDistance(currentCoord, chunk.coord) <= debugRadius;
+      if (visible && !chunk.debug) {
+        chunk.debug = this.debugRenderer.createChunkDebug(chunk.chunk);
+        this.world.add(chunk.debug);
+      }
+      if (chunk.debug) {
+        chunk.debug.visible = visible;
+      }
     }
   }
 

@@ -198,6 +198,109 @@ function markPath(
   }
 }
 
+export function ensurePortalConnectivity(
+  cells: LeafCell[],
+  portals: Portal[],
+  adjacency: [string, string][],
+  freeIds: Set<string>,
+): void {
+  const adjMap = toAdjacencyMap(adjacency);
+  const minPassage = GAME_CONFIG.world.minPassageRadius * 2;
+  const passableIds = new Set(
+    cells
+      .filter((cell) => {
+        const size = aabbSize(cell.bounds);
+        return Math.min(size.x, size.y, size.z) >= minPassage;
+      })
+      .map((cell) => cell.id),
+  );
+
+  const portalCellIds: string[] = [];
+  for (const portal of portals) {
+    const best = findBestPortalCell(cells, portal, passableIds);
+    if (best) {
+      portalCellIds.push(best.id);
+      freeIds.add(best.id);
+    }
+  }
+
+  if (portalCellIds.length < 2) {
+    return;
+  }
+
+  const anchor = portalCellIds[0];
+  for (let iteration = 0; iteration < portalCellIds.length; iteration++) {
+    const reachable = bfsFreeReachable(anchor, adjMap, freeIds);
+    let disconnected: string | null = null;
+    for (const pid of portalCellIds) {
+      if (!reachable.has(pid)) {
+        disconnected = pid;
+        break;
+      }
+    }
+    if (disconnected === null) {
+      return;
+    }
+    const path = bfsPathToSet(disconnected, reachable, adjMap);
+    if (path) {
+      for (const id of path) {
+        freeIds.add(id);
+      }
+    }
+  }
+}
+
+function bfsFreeReachable(
+  start: string,
+  adjMap: Map<string, string[]>,
+  freeIds: Set<string>,
+): Set<string> {
+  const visited = new Set<string>();
+  const queue = [start];
+  visited.add(start);
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const next of adjMap.get(current) ?? []) {
+      if (freeIds.has(next) && !visited.has(next)) {
+        visited.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return visited;
+}
+
+function bfsPathToSet(
+  start: string,
+  targets: Set<string>,
+  adjMap: Map<string, string[]>,
+): string[] | null {
+  if (targets.has(start)) {
+    return [];
+  }
+  const previous = new Map<string, string | null>([[start, null]]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current !== start && targets.has(current)) {
+      const path: string[] = [];
+      let cursor: string | null = current;
+      while (cursor !== null) {
+        path.push(cursor);
+        cursor = previous.get(cursor) ?? null;
+      }
+      return path;
+    }
+    for (const next of adjMap.get(current) ?? []) {
+      if (!previous.has(next)) {
+        previous.set(next, current);
+        queue.push(next);
+      }
+    }
+  }
+  return null;
+}
+
 function findNearestFree(cellId: string, cells: LeafCell[], freeIds: Set<string>): string | null {
   const source = cells.find((cell) => cell.id === cellId);
   if (!source) {

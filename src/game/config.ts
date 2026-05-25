@@ -19,9 +19,9 @@ export const GAME_CONFIG = {
     hitInvulnerabilityTime: 1,
   },
   camera: {
-    distance: 10.5,
+    distance: 8.5,
     height: 3.4,
-    smoothness: 0.12,
+    smoothness: 0.1,
     followLookDelay: 0.22,
     followLookDamping: 4.8,
     keyboardYawSpeed: 1.8,
@@ -35,11 +35,23 @@ export const GAME_CONFIG = {
     fov: 68,
     pitchMin: -1.2,
     pitchMax: 1.2,
+    // How many seconds of travel the camera looks ahead. Scales with ship speed
+    // so at high speed the view opens up further ahead.
+    lookAheadSeconds: 1.0,
+    // Minimum look-ahead distance (units) when the ship is slow or stationary.
+    lookAheadMin: 3,
+    // Safety margin (fraction of half-FOV) keeping framed points away from screen edges.
+    viewMargin: 0.12,
+    // Points in ship-local space (x=right, y=up, z=forward/nose) that must always be visible.
+    shipViewAnchors: [
+      { x: 0, y: 0, z: 2.5 },   // nose
+      { x: 0, y: 0, z: -1.5 },  // tail
+    ],
   },
   world: {
     chunkSize: 64,
     interactiveRadius: 0,
-    simulationRadius: 0,
+    simulationRadius: 1,
     preloadRadiusPadding: 1,
     generationLookaheadSeconds: 4,
     spawnBudgetInitial: 10,
@@ -58,9 +70,9 @@ export const GAME_CONFIG = {
     portalRadius: 4.5,
     portalInset: 2.2,
     portalThickness: 2,
-    denseSplitDivisions: 2,
-    sparseSplitDivisions: 1,
-    octoboxMaxDepth: 3,
+    denseSplitDivisions: 3,
+    sparseSplitDivisions: 2,
+    octoboxMaxDepth: 4,
     octoboxSplitProbability: 0.82,
     octoboxMinCellSizeMultiplier: 1.15,
     octoboxMaxCellSizeMultiplier: 20,
@@ -98,8 +110,24 @@ export const GAME_CONFIG = {
     radius: 1.2,
     damage: 34,
   },
+  cave: {
+    enabled: true,
+    entranceProbability: 0.06,
+    baseRadius: 5.5,
+    minRadius: 3,
+    radiusDecayPerDepth: 0.8,
+    nodeSpacing: 14,
+    minNodes: 3,
+    maxNodes: 6,
+    maxCurvature: 0.35,
+    branchProbability: 0.4,
+    maxBranchDepth: 2,
+    gauntletSpacing: 10,
+    ringSegments: 12,
+    sampleStep: 2,
+  },
   visuals: {
-    debugEnabled: true,
+    debugEnabled: false,
     debugChunkRadius: 0,
     skyColor: 0x03111a,
     fogColor: 0x02070c,

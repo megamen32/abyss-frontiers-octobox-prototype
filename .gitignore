@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .playwright-mcp/
+test-results/
+playwright-report/
+artifacts/performance/*.json
 *.png
 .DS_Store
 .vite-dev.pid

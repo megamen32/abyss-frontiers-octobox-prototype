@@ -42,7 +42,11 @@ self.onmessage = (event: MessageEvent<GenerateChunkRequest>) => {
       totalMs: result.timings.totalMs + serializeMs,
     },
   };
-  self.postMessage(response);
+  const mesh = dehydrated.staticMeshData;
+  const transferables: Transferable[] = mesh
+    ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer]
+    : [];
+  self.postMessage(response, transferables);
 };
 
 export {};
