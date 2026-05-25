@@ -1,4 +1,4 @@
-import type { ChunkCoord } from '../types';
+import type { ChunkCoord, DebugTimingSnapshot } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 
 interface HudSnapshot {
@@ -17,9 +17,11 @@ interface HudSnapshot {
   dangerAccent: string;
   tuning: RuntimeFlightTuning;
   debugEnabled: boolean;
+  chunkDebugEnabled: boolean;
   fogEnabled: boolean;
   spawnBudget: number;
   averageFps: number;
+  timings: DebugTimingSnapshot;
   dead: boolean;
 }
 
@@ -40,6 +42,7 @@ export class Hud {
   private readonly dangerValue = document.createElement('span');
   private readonly stallValue = document.createElement('span');
   private readonly tuningReadout = document.createElement('div');
+  private readonly timingReadout = document.createElement('div');
   private readonly depthGaugeFill = document.createElement('div');
   private readonly debugButton = document.createElement('button');
   private readonly restartButton = document.createElement('button');
@@ -96,9 +99,10 @@ export class Hud {
     this.debugButton.addEventListener('click', () => this.onToggleDebug?.());
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = 'A/D yaw the thrust, W/S pitch it, inertia keeps the hull drifting, hard deflections can stall the flow. F toggles fog, Z toggles debug.';
+    hint.textContent = 'A/D yaw the thrust, W/S pitch it, inertia keeps the hull drifting, hard deflections can stall the flow. Z toggles debug, C toggles chunk debug, F toggles fog.';
     this.tuningReadout.className = 'tuning-readout';
-    controls.append(this.restartButton, this.debugButton, hint, this.tuningReadout);
+    this.timingReadout.className = 'tuning-readout';
+    controls.append(this.restartButton, this.debugButton, hint, this.tuningReadout, this.timingReadout);
 
     top.append(panel, controls);
 
@@ -150,8 +154,17 @@ export class Hud {
     this.tuningReadout.textContent =
       `Accel +/- ${snapshot.tuning.baseAcceleration.toFixed(1)}  Drag [] ${snapshot.tuning.baseDrag.toFixed(2)}`
       + `  Turn ;' ${snapshot.tuning.turnInputSpeed.toFixed(2)}  Spawn/frame ${snapshot.spawnBudget}`
-      + `  Avg FPS ${snapshot.averageFps.toFixed(1)}  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`;
+      + `  Avg FPS ${snapshot.averageFps.toFixed(1)}  Chunk Debug ${snapshot.chunkDebugEnabled ? 'ON' : 'OFF'}`
+      + `  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`;
+    this.timingReadout.textContent =
+      `Frame ${snapshot.timings.frameMs.toFixed(1)}ms  Input ${snapshot.timings.inputMs.toFixed(1)}`
+      + `  Sim ${snapshot.timings.simulationMs.toFixed(1)}  Sync ${snapshot.timings.chunkSyncMs.toFixed(1)}`
+      + `  World ${snapshot.timings.worldMs.toFixed(1)}  Render ${snapshot.timings.renderMs.toFixed(1)}`
+      + `  Hydrate ${snapshot.timings.hydrateMs.toFixed(1)}  ReadyQ ${snapshot.timings.readyQueueMs.toFixed(1)}`
+      + `  Worker ${snapshot.timings.workerTotalMs.toFixed(1)}  Octo ${snapshot.timings.workerOctoboxMs.toFixed(1)}`
+      + `  Serialize ${snapshot.timings.workerSerializeMs.toFixed(1)}`;
     this.tuningReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
+    this.timingReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
 
     const deathStats = this.deathOverlay.querySelector('.death-stats');
     if (deathStats) {

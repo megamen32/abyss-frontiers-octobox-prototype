@@ -7,6 +7,7 @@ export class InputController {
   private turnAdjustLatched = 0;
   private restartLatched = false;
   private debugLatched = false;
+  private chunkDebugLatched = false;
   private fogLatched = false;
 
   constructor(private readonly target: Window) {
@@ -30,6 +31,7 @@ export class InputController {
       turnAdjust: this.turnAdjustLatched,
       restartPressed: this.restartLatched,
       debugTogglePressed: this.debugLatched,
+      chunkDebugTogglePressed: this.chunkDebugLatched,
       fogTogglePressed: this.fogLatched,
     };
     this.accelerationAdjustLatched = 0;
@@ -37,6 +39,7 @@ export class InputController {
     this.turnAdjustLatched = 0;
     this.restartLatched = false;
     this.debugLatched = false;
+    this.chunkDebugLatched = false;
     this.fogLatched = false;
     return state;
   }
@@ -49,6 +52,10 @@ export class InputController {
     if (event.code === 'KeyZ') {
       event.preventDefault();
       this.debugLatched = true;
+    }
+    if (event.code === 'KeyC') {
+      event.preventDefault();
+      this.chunkDebugLatched = true;
     }
     if (event.code === 'KeyF') {
       event.preventDefault();

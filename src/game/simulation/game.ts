@@ -3,7 +3,7 @@ import { GAME_CONFIG } from '../config';
 import type { ChunkCoord, ChunkData, Obstacle } from '../types';
 import { RenderApp } from '../render/App';
 import { ChunkManager } from './chunkManager';
-import { overlapsObstacle, resolvePlayerObstacleCollision, sweptSphereHitsObstacle } from './collisions';
+import { overlapsObstacle, resolvePlayerObstacleCollision, resolvePlayerSurfaceCollision, sweptSphereHitsObstacle } from './collisions';
 import { InputController } from './input';
 import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
@@ -11,6 +11,7 @@ import { applyRuntimeTuning } from './runtimeTuning';
 import { applyKeyboardSteering } from './steering';
 import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
 import { SpawnBudgetController } from './spawnBudget';
+import { FrameProfiler } from './frameProfiler';
 
 export class Game {
   private readonly input = new InputController(window);
@@ -26,14 +27,17 @@ export class Game {
   private currentChunk = { x: 0, y: 0, z: 0 };
   private running = false;
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
+  private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private fogEnabled = true;
   private lastFrameTime = 0;
   private fps = 60;
   private readonly spawnBudget = new SpawnBudgetController();
+  private readonly profiler = new FrameProfiler();
 
   constructor(root: HTMLElement) {
     this.render = new RenderApp(root);
     this.render.setDebugEnabled(this.debugEnabled);
+    this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
     this.render.setFogEnabled(this.fogEnabled);
     this.render.hud.setCallbacks({
       onRestart: () => this.restart(),
@@ -66,6 +70,11 @@ export class Game {
     this.render.setDebugEnabled(this.debugEnabled);
   }
 
+  private toggleChunkDebug(): void {
+    this.chunkDebugEnabled = !this.chunkDebugEnabled;
+    this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
+  }
+
   private toggleFog(): void {
     this.fogEnabled = !this.fogEnabled;
     this.render.setFogEnabled(this.fogEnabled);
@@ -75,10 +84,13 @@ export class Game {
     if (!this.running) {
       return;
     }
-    const dt = Math.min(0.05, (timestamp - this.lastFrameTime || 16.6) / 1000);
+    const rawDt = Math.max(0.0001, (timestamp - this.lastFrameTime || 16.6) / 1000);
+    const dt = Math.min(0.05, rawDt);
+    const frameStart = performance.now();
     this.lastFrameTime = timestamp;
-    this.fps = 1 / dt;
+    this.fps = 1 / rawDt;
 
+    const inputStart = performance.now();
     const input = this.input.sample();
     if (input.restartPressed) {
       this.restart();
@@ -86,22 +98,34 @@ export class Game {
     if (input.debugTogglePressed) {
       this.toggleDebug();
     }
+    if (input.chunkDebugTogglePressed) {
+      this.toggleChunkDebug();
+    }
     if (input.fogTogglePressed) {
       this.toggleFog();
     }
+    this.profiler.addSample('inputMs', performance.now() - inputStart);
 
+    const simulationStart = performance.now();
     const tuning = applyRuntimeTuning(input);
     applyKeyboardSteering(this.player, input, dt);
     updatePlayer(this.player, dt);
+    this.profiler.addSample('simulationMs', performance.now() - simulationStart);
+
+    const chunkSyncStart = performance.now();
     const travel = travelDirection(this.player);
     const sync = this.chunkManager.syncAround(this.player.position, travel, this.player.speed);
     this.currentChunk = sync.currentCoord;
     this.render.syncChunks(sync.added, sync.removed);
+    this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
 
+    const worldStart = performance.now();
     this.updateWorld(dt);
-    this.spawnBudget.recordFrame(dt, this.fps);
+    this.profiler.addSample('worldMs', performance.now() - worldStart);
+    this.spawnBudget.recordFrame(rawDt, this.fps);
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
+    const renderStart = performance.now();
     this.render.updateFrame({
       player: this.player,
       chunks: this.chunkManager.activeChunks.values(),
@@ -117,12 +141,23 @@ export class Game {
       fogEnabled: this.fogEnabled,
       spawnBudget: this.spawnBudget.getBudget(),
       averageFps: this.spawnBudget.getAverageFps(),
+      timings: {
+        ...this.profiler.snapshot(),
+        ...this.chunkManager.consumeDebugTimings(),
+      },
     });
+    this.profiler.addSample('renderMs', performance.now() - renderStart);
+    this.profiler.addSample('frameMs', performance.now() - frameStart);
+    this.profiler.addSnapshot(this.chunkManager.consumeDebugTimings());
 
     requestAnimationFrame(this.loop);
   };
 
   private updateWorld(dt: number): void {
+    if (this.handleSurfaceCollision()) {
+      return;
+    }
+
     const interactiveChunks = this.getChunksWithinRadius(GAME_CONFIG.world.interactiveRadius);
     const simulationChunks = this.getChunksWithinRadius(GAME_CONFIG.world.simulationRadius);
 
@@ -147,6 +182,16 @@ export class Game {
         this.player.loot += loot.value;
       }
     }
+  }
+
+  private handleSurfaceCollision(): boolean {
+    if (!this.player.alive || this.player.position.y <= this.spawnPosition.y) {
+      return false;
+    }
+
+    resolvePlayerSurfaceCollision(this.player, this.spawnPosition.y);
+    applyDamage(this.player, GAME_CONFIG.collision.surfaceDamage);
+    return !this.player.alive;
   }
 
   private handleCollisions(chunk: ChunkData): void {

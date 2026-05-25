@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ChunkGenerator } from '../src/game/content/chunkGenerator';
 import { GAME_CONFIG } from '../src/game/config';
 import { prioritizedChunkCoords } from '../src/game/simulation/chunkManager';
-import { resolvePlayerObstacleCollision, sweptSphereHitsObstacle } from '../src/game/simulation/collisions';
+import {
+  resolvePlayerObstacleCollision,
+  resolvePlayerSurfaceCollision,
+  sweptSphereHitsObstacle,
+} from '../src/game/simulation/collisions';
 import { updateMinesInChunk } from '../src/game/simulation/mines';
-import { createInitialPlayerState, travelDirection, updatePlayer } from '../src/game/simulation/player';
+import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from '../src/game/simulation/player';
 import { applyRuntimeTuning, getRuntimeFlightTuning, resetRuntimeFlightTuning } from '../src/game/simulation/runtimeTuning';
 import { SpawnBudgetController } from '../src/game/simulation/spawnBudget';
 import type { InputState, Obstacle } from '../src/game/types';
@@ -24,6 +28,7 @@ function testInput(overrides: Partial<InputState> = {}): InputState {
     turnAdjust: 0,
     restartPressed: false,
     debugTogglePressed: false,
+    chunkDebugTogglePressed: false,
     fogTogglePressed: false,
     ...overrides,
   };
@@ -146,9 +151,11 @@ describe('ChunkGenerator', () => {
   it('raises world danger and obstacle density with depth', () => {
     const generator = new ChunkGenerator(133742);
     const shallow = generator.generate({ x: 0, y: 0, z: 0 });
+    const surface = generator.generate({ x: 0, y: 1, z: 0 });
     const deep = generator.generate({ x: 0, y: -4, z: 0 });
 
     expect(worldDangerLevel(GAME_CONFIG.world.spawn.y)).toBe(0);
+    expect(surface.obstacles.length).toBe(0);
     expect(worldDangerLevel(deep.bounds.max.y)).toBeGreaterThan(worldDangerLevel(shallow.bounds.max.y));
     expect(bandForDangerLevel(worldDangerLevel(deep.bounds.max.y)).label).toBe('PRESSURE TRENCH');
     expect(deep.obstacles.length).toBeGreaterThan(shallow.obstacles.length);
@@ -156,6 +163,7 @@ describe('ChunkGenerator', () => {
 
   it('accelerates gradually and gains more speed at depth', () => {
     const player = createInitialPlayerState();
+    expect(player.hp).toBe(100);
     const initialSpeed = player.velocity.length();
 
     updatePlayer(player, 0.1);
@@ -260,17 +268,20 @@ describe('ChunkGenerator', () => {
     expect(chunkGenerationRadius()).toBe(fogChunkRenderRadius() + GAME_CONFIG.world.preloadRadiusPadding);
   });
 
-  it('reduces spawn budget by one after a low-fps minute but never below one', () => {
+  it('reduces spawn budget by one after a low-fps sample window but never below one', () => {
     const budget = new SpawnBudgetController();
+    const framesPerWindow = 10;
+    const dt = GAME_CONFIG.world.spawnBudgetSampleSeconds / framesPerWindow;
+    const lowFps = GAME_CONFIG.world.spawnBudgetFpsThreshold - 1;
 
-    for (let index = 0; index < 10; index += 1) {
-      budget.recordFrame(6, 15);
+    for (let index = 0; index < framesPerWindow; index += 1) {
+      budget.recordFrame(dt, lowFps);
     }
     expect(budget.getBudget()).toBe(GAME_CONFIG.world.spawnBudgetInitial - 1);
 
     const extraMinutes = GAME_CONFIG.world.spawnBudgetInitial - GAME_CONFIG.world.spawnBudgetMin - 1;
-    for (let index = 0; index < extraMinutes * 10; index += 1) {
-      budget.recordFrame(6, 10);
+    for (let index = 0; index < extraMinutes * framesPerWindow; index += 1) {
+      budget.recordFrame(dt, lowFps);
     }
     expect(budget.getBudget()).toBe(GAME_CONFIG.world.spawnBudgetMin);
   });
@@ -342,6 +353,37 @@ describe('ChunkGenerator', () => {
 
     resolvePlayerObstacleCollision(player, obstacle);
     expect(player.position.z).toBeLessThan(40);
-    expect(player.velocity.length()).toBeLessThan(22);
+    expect(player.velocity.z).toBeLessThan(0);
+    expect(player.velocity.length()).toBeGreaterThan(6);
+    expect(player.forward.angleTo(player.velocity.clone().normalize())).toBeLessThan(0.001);
+  });
+
+  it('survives five surface hits and gets knocked back underwater', () => {
+    const player = createInitialPlayerState();
+    player.position.set(0, GAME_CONFIG.world.spawn.y + 2, 0);
+    player.previousPosition.set(0, GAME_CONFIG.world.spawn.y - 0.5, 0);
+    player.velocity.set(3, 9, 1);
+
+    for (let hit = 1; hit <= 5; hit += 1) {
+      resolvePlayerSurfaceCollision(player, GAME_CONFIG.world.spawn.y);
+      applyDamage(player, GAME_CONFIG.collision.surfaceDamage);
+
+      expect(player.position.y).toBeLessThan(GAME_CONFIG.world.spawn.y);
+
+      if (hit < 5) {
+        expect(player.alive).toBe(true);
+        expect(player.velocity.y).toBeLessThan(0);
+        expect(player.forward.angleTo(player.velocity.clone().normalize())).toBeLessThan(0.001);
+        expect(player.hp).toBe(GAME_CONFIG.ship.hp - GAME_CONFIG.collision.surfaceDamage * hit);
+        player.invulnerabilityTimer = 0;
+        player.position.y = GAME_CONFIG.world.spawn.y + 1.5;
+        player.previousPosition.y = GAME_CONFIG.world.spawn.y - 0.25;
+        player.velocity.set(2, 8, -1);
+      } else {
+        expect(player.hp).toBe(0);
+        expect(player.alive).toBe(false);
+        expect(player.velocity.length()).toBe(0);
+      }
+    }
   });
 });

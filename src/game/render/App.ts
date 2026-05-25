@@ -18,7 +18,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { CameraState, ChunkData, Loot, Obstacle, PlayerState } from '../types';
+import type { CameraState, ChunkData, DebugTimingSnapshot, Loot, Obstacle, PlayerState } from '../types';
 import { DebugRenderer } from './DebugRenderer';
 import { Hud } from './Hud';
 import { RenderPools } from './pools';
@@ -66,6 +66,7 @@ export class RenderApp {
     GAME_CONFIG.world.spawn.z,
   );
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
+  private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private fogEnabled = true;
   private pointerLocked = false;
 
@@ -104,6 +105,10 @@ export class RenderApp {
     this.simulationRadiusHelper.visible = enabled;
   }
 
+  setChunkDebugEnabled(enabled: boolean): void {
+    this.chunkDebugEnabled = enabled;
+  }
+
   setFogEnabled(enabled: boolean): void {
     this.fogEnabled = enabled;
     this.scene.fog = enabled
@@ -126,7 +131,7 @@ export class RenderApp {
     for (const chunk of added) {
       const group = new Group();
       const debug = this.debugRenderer.createChunkDebug(chunk);
-      debug.visible = this.debugEnabled;
+      debug.visible = this.debugEnabled && this.chunkDebugEnabled;
       this.world.add(group);
       this.world.add(debug);
       this.chunkGroups.set(chunk.key, { chunk, group, debug, pooled: [], coord: chunk.coord, spawnCursor: 0 });
@@ -148,6 +153,7 @@ export class RenderApp {
     fogEnabled: boolean;
     spawnBudget: number;
     averageFps: number;
+    timings: DebugTimingSnapshot;
   }): void {
     const desiredLookDirection = this.resolveDesiredLookDirection(frame.player);
     const orientation = orientationFromLook(desiredLookDirection);
@@ -170,7 +176,7 @@ export class RenderApp {
 
     this.updateChunkRadiusHelpers(frame.chunkCoord);
     this.updateDebugChunkVisibility(frame.chunkCoord);
-    this.updateCameraFocus(frame.player.position);
+    this.updateCameraFocus(frame.player.position, desiredLookDirection);
 
     const cameraOffset = new Vector3(0, GAME_CONFIG.camera.height, -GAME_CONFIG.camera.distance)
       .applyAxisAngle(new Vector3(1, 0, 0), this.cameraState.pitch)
@@ -195,9 +201,11 @@ export class RenderApp {
       dangerAccent: frame.dangerAccent,
       tuning: frame.tuning,
       debugEnabled: this.debugEnabled,
+      chunkDebugEnabled: this.chunkDebugEnabled,
       fogEnabled: frame.fogEnabled,
       spawnBudget: frame.spawnBudget,
       averageFps: frame.averageFps,
+      timings: frame.timings,
       dead: !frame.player.alive,
     });
 
@@ -433,33 +441,12 @@ export class RenderApp {
     return player.forward.clone().lerp(player.targetThrustForward, assistBlend).normalize();
   }
 
-  private updateCameraFocus(playerPosition: Vector3): void {
+  private updateCameraFocus(playerPosition: Vector3, forward: Vector3): void {
+    const rearPoint = playerPosition.clone().addScaledVector(forward, -0.5);
+    const frontPoint = playerPosition.clone().addScaledVector(forward, 5);
+    const targetFocus = rearPoint.lerp(frontPoint, 0.5);
     const followBlend = 1 - Math.exp(-4 * GAME_CONFIG.camera.smoothness);
-    this.cameraFocus.lerp(playerPosition, followBlend);
-
-    const forward = new Vector3(
-      Math.sin(this.cameraState.yaw) * Math.cos(this.cameraState.pitch),
-      -Math.sin(this.cameraState.pitch),
-      Math.cos(this.cameraState.yaw) * Math.cos(this.cameraState.pitch),
-    ).normalize();
-    const right = new Vector3().crossVectors(new Vector3(0, 1, 0), forward).normalize();
-    const up = new Vector3().crossVectors(forward, right).normalize();
-    const offset = playerPosition.clone().sub(this.cameraFocus);
-    const horizontal = offset.dot(right);
-    const vertical = offset.dot(up);
-
-    if (Math.abs(horizontal) > GAME_CONFIG.camera.deadlockHalfWidth) {
-      this.cameraFocus.addScaledVector(
-        right,
-        horizontal - Math.sign(horizontal) * GAME_CONFIG.camera.deadlockHalfWidth,
-      );
-    }
-    if (Math.abs(vertical) > GAME_CONFIG.camera.deadlockHalfHeight) {
-      this.cameraFocus.addScaledVector(
-        up,
-        vertical - Math.sign(vertical) * GAME_CONFIG.camera.deadlockHalfHeight,
-      );
-    }
+    this.cameraFocus.lerp(targetFocus, followBlend);
   }
 
   private updateChunkRadiusHelpers(chunkCoord: { x: number; y: number; z: number }): void {
@@ -492,7 +479,10 @@ export class RenderApp {
   private updateDebugChunkVisibility(currentCoord: ChunkCoord): void {
     const debugRadius = GAME_CONFIG.visuals.debugChunkRadius;
     for (const chunk of this.chunkGroups.values()) {
-      chunk.debug.visible = this.debugEnabled && chunkDistance(currentCoord, chunk.coord) <= debugRadius;
+      chunk.debug.visible =
+        this.debugEnabled
+        && this.chunkDebugEnabled
+        && chunkDistance(currentCoord, chunk.coord) <= debugRadius;
     }
   }
 
@@ -508,15 +498,15 @@ export class RenderApp {
 
   private setupPlayerMesh(): void {
     const hull = new Mesh(
-      new SphereGeometry(1.05, 18, 18),
+      new SphereGeometry(0.72, 18, 18),
       new MeshStandardMaterial({ color: new Color('#d9edf9'), metalness: 0.35, roughness: 0.4 }),
     );
-    hull.scale.set(1, 0.65, 1.5);
+    hull.scale.set(1, 0.72, 1.1);
     const prow = new Mesh(
-      new BoxGeometry(0.45, 0.35, 1.8),
+      new BoxGeometry(0.28, 0.22, 0.9),
       new MeshStandardMaterial({ color: new Color('#5dd1ff'), emissive: new Color('#0d3048') }),
     );
-    prow.position.z = 1.2;
+    prow.position.z = 0.7;
     this.playerMesh.add(hull, prow, this.playerRadius);
     this.scene.add(this.playerMesh);
   }

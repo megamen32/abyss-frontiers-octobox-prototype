@@ -1,4 +1,4 @@
-import type { ChunkCoord, ChunkData } from '../types';
+import type { ChunkBuildTimings, ChunkCoord, ChunkData } from '../types';
 import { chunkBounds, chunkKey } from '../utils/chunk';
 import { chunkSeed } from '../utils/hash';
 import { SeededRandom } from '../utils/rng';
@@ -13,13 +13,22 @@ export class ChunkGenerator {
   constructor(private readonly globalSeed: number) {}
 
   generate(coord: ChunkCoord): ChunkData {
+    return this.generateProfiled(coord).chunk;
+  }
+
+  generateProfiled(coord: ChunkCoord): { chunk: ChunkData; timings: ChunkBuildTimings } {
+    const totalStart = performance.now();
     const bounds = chunkBounds(coord);
     const seed = chunkSeed(this.globalSeed, coord);
     const rng = new SeededRandom(seed);
     const portals = generatePortals(this.globalSeed, coord, bounds);
+    const octoboxStart = performance.now();
     const cells = generateOctoBoxLeaves(bounds, seed);
+    const octoboxMs = performance.now() - octoboxStart;
+    const navigationStart = performance.now();
     const adjacencyAll = buildAdjacency(cells);
     const freeIds = buildNavigableSet(cells, portals, adjacencyAll, rng, bounds);
+    const navigationMs = performance.now() - navigationStart;
 
     for (const cell of cells) {
       if (freeIds.has(cell.id)) {
@@ -27,9 +36,15 @@ export class ChunkGenerator {
       }
     }
 
+    const obstaclesStart = performance.now();
     const obstacles = placeObstacles(cells, portals, rng);
+    const obstaclesMs = performance.now() - obstaclesStart;
+    const lootStart = performance.now();
     const loot = placeLoot(cells, portals, rng);
+    const lootMs = performance.now() - lootStart;
+    const minesStart = performance.now();
     const mines = placeMines(cells, portals, rng, chunkKey(coord));
+    const minesMs = performance.now() - minesStart;
     const adjacency = adjacencyAll.filter(([a, b]) => freeIds.has(a) && freeIds.has(b));
 
     const obstacleCells = new Set(obstacles.map((obstacle) => obstacle.cellId));
@@ -39,7 +54,7 @@ export class ChunkGenerator {
       }
     }
 
-    return {
+    const chunk: ChunkData = {
       key: chunkKey(coord),
       coord,
       seed,
@@ -50,6 +65,19 @@ export class ChunkGenerator {
       obstacles,
       loot,
       mines,
+    };
+
+    return {
+      chunk,
+      timings: {
+        totalMs: performance.now() - totalStart,
+        octoboxMs,
+        navigationMs,
+        obstaclesMs,
+        lootMs,
+        minesMs,
+        serializeMs: 0,
+      },
     };
   }
 }

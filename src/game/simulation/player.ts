@@ -67,7 +67,9 @@ export function updatePlayer(player: PlayerState, dt: number): void {
     GAME_CONFIG.ship.visualForwardTurnRateMin,
     MathUtils.clamp(player.speed / GAME_CONFIG.ship.maxSpeed, 0, 1),
   );
-  const visualBlend = 1 - Math.exp(-visualTurnRate * dt);
+  const forwardError = angleBetweenVectors(player.forward, desiredForward);
+  const recoveryTurnBoost = smoothstep(MathUtils.degToRad(18), Math.PI * 0.5, forwardError);
+  const visualBlend = 1 - Math.exp(-(visualTurnRate + recoveryTurnBoost * 18) * dt);
   slerpVector(player.forward, desiredForward, visualBlend);
 
   player.position.addScaledVector(player.velocity, dt);
@@ -84,6 +86,18 @@ export function applyDamage(player: PlayerState, damage: number): void {
     player.alive = false;
     player.velocity.multiplyScalar(0);
   }
+}
+
+export function alignPlayerToDirection(player: PlayerState, direction: Vector3, blend = 1): void {
+  if (direction.lengthSq() <= 0.0001) {
+    return;
+  }
+
+  const clampedBlend = MathUtils.clamp(blend, 0, 1);
+  const normalizedDirection = direction.clone().normalize();
+  slerpVector(player.forward, normalizedDirection, clampedBlend);
+  slerpVector(player.thrustForward, normalizedDirection, clampedBlend);
+  slerpVector(player.targetThrustForward, normalizedDirection, clampedBlend);
 }
 
 export function orientationFromLook(direction: Vector3): { yaw: number; pitch: number } {

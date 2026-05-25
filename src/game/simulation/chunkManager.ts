@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { ChunkCoord, ChunkData, ChunkSyncResult } from '../types';
+import type { ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, ChunkSyncResult } from '../types';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { chunkGenerationRadius } from '../utils/visibility';
 import { ChunkGenerator } from '../content/chunkGenerator';
@@ -10,6 +10,7 @@ interface ChunkWorkerResponse {
   type: 'ready';
   key: string;
   chunk: Parameters<typeof hydrateChunk>[0];
+  timings: ChunkBuildTimings;
 }
 
 export class ChunkManager {
@@ -20,6 +21,13 @@ export class ChunkManager {
   private readonly pendingKeys = new Set<string>();
   private readonly wantedKeys = new Set<string>();
   private readonly readyQueue: ChunkData[] = [];
+  private readonly debugTimings: Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerSerializeMs'> = {
+    hydrateMs: 0,
+    readyQueueMs: 0,
+    workerTotalMs: 0,
+    workerOctoboxMs: 0,
+    workerSerializeMs: 0,
+  };
   private roundRobinIndex = 0;
 
   constructor(seed: number) {
@@ -68,6 +76,7 @@ export class ChunkManager {
       }
     }
 
+    const readyQueueStart = performance.now();
     while (this.readyQueue.length > 0) {
       const chunk = this.readyQueue.shift();
       if (!chunk || !wanted.has(chunk.key) || this.activeChunks.has(chunk.key)) {
@@ -76,8 +85,13 @@ export class ChunkManager {
       this.activeChunks.set(chunk.key, chunk);
       added.push(chunk);
     }
+    this.debugTimings.readyQueueMs = smoothTiming(this.debugTimings.readyQueueMs, performance.now() - readyQueueStart);
 
     return { added, removed, currentCoord };
+  }
+
+  consumeDebugTimings(): Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerSerializeMs'> {
+    return { ...this.debugTimings };
   }
 
   dispose(): void {
@@ -92,12 +106,24 @@ export class ChunkManager {
       return;
     }
     this.pendingKeys.delete(event.data.key);
+    this.debugTimings.workerTotalMs = smoothTiming(this.debugTimings.workerTotalMs, event.data.timings.totalMs);
+    this.debugTimings.workerOctoboxMs = smoothTiming(this.debugTimings.workerOctoboxMs, event.data.timings.octoboxMs);
+    this.debugTimings.workerSerializeMs = smoothTiming(this.debugTimings.workerSerializeMs, event.data.timings.serializeMs);
+    const hydrateStart = performance.now();
     const chunk = hydrateChunk(event.data.chunk);
+    this.debugTimings.hydrateMs = smoothTiming(this.debugTimings.hydrateMs, performance.now() - hydrateStart);
     if (!this.wantedKeys.has(chunk.key) || this.activeChunks.has(chunk.key)) {
       return;
     }
     this.readyQueue.push(chunk);
   };
+}
+
+function smoothTiming(current: number, next: number): number {
+  if (current === 0) {
+    return next;
+  }
+  return current * 0.82 + next * 0.18;
 }
 
 export function prioritizedChunkCoords(

@@ -2,7 +2,7 @@
 
 import { ChunkGenerator } from './chunkGenerator';
 import { dehydrateChunk } from './chunkPayload';
-import type { ChunkCoord } from '../types';
+import type { ChunkBuildTimings, ChunkCoord } from '../types';
 
 interface GenerateChunkRequest {
   type: 'generate';
@@ -14,6 +14,7 @@ interface GenerateChunkResponse {
   type: 'ready';
   key: string;
   chunk: ReturnType<typeof dehydrateChunk>;
+  timings: ChunkBuildTimings;
 }
 
 let generator: ChunkGenerator | null = null;
@@ -27,11 +28,19 @@ self.onmessage = (event: MessageEvent<GenerateChunkRequest>) => {
     generator = new ChunkGenerator(event.data.seed);
     currentSeed = event.data.seed;
   }
-  const chunk = generator.generate(event.data.coord);
+  const result = generator.generateProfiled(event.data.coord);
+  const serializeStart = performance.now();
+  const dehydrated = dehydrateChunk(result.chunk);
+  const serializeMs = performance.now() - serializeStart;
   const response: GenerateChunkResponse = {
     type: 'ready',
-    key: chunk.key,
-    chunk: dehydrateChunk(chunk),
+    key: result.chunk.key,
+    chunk: dehydrated,
+    timings: {
+      ...result.timings,
+      serializeMs,
+      totalMs: result.timings.totalMs + serializeMs,
+    },
   };
   self.postMessage(response);
 };

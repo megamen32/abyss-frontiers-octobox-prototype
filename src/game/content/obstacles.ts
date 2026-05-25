@@ -32,6 +32,9 @@ export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: Seeded
 
     const caveMode = GAME_CONFIG.world.generationMode === 'cave';
     const depthDanger = worldDangerLevel(aabbCenter(cell.bounds).y);
+    if (depthDanger <= 0) {
+      continue;
+    }
     const densityBonus = depthDanger * GAME_CONFIG.world.depthObstacleDensityBonus;
     const shouldFill =
       caveMode
@@ -58,7 +61,7 @@ export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: Seeded
       position: aabbCenter(cell.bounds),
       basePosition: aabbCenter(cell.bounds),
       size,
-      damage: minSize > 8 ? 2 : GAME_CONFIG.collision.obstacleDamage,
+      damage: minSize > 8 ? GAME_CONFIG.collision.largeObstacleDamage : GAME_CONFIG.collision.obstacleDamage,
       cellId: cell.id,
       axis: new Vector3(0, 1, 0),
       angularSpeed: 0,

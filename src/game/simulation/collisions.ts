@@ -1,8 +1,9 @@
 import { Box3, MathUtils, Vector3 } from 'three';
+import { GAME_CONFIG } from '../config';
 import type { Obstacle, PlayerState } from '../types';
-import { travelDirection } from './player';
+import { alignPlayerToDirection, travelDirection } from './player';
 
-const EPSILON = 0.001;
+const SURFACE_NORMAL = new Vector3(0, -1, 0);
 
 export function overlapsObstacle(position: Vector3, radius: number, obstacle: Obstacle): boolean {
   if (obstacle.type === 'sphere' && obstacle.radius) {
@@ -45,17 +46,59 @@ export function resolvePlayerObstacleCollision(player: PlayerState, obstacle: Ob
   const moveDirection = player.position.clone().sub(player.previousPosition);
   const fallbackDirection =
     moveDirection.lengthSq() > 0.0001 ? moveDirection.normalize() : travelDirection(player);
-  const hitNormal = obstacleCollisionNormal(player.previousPosition, obstacle).multiplyScalar(-1);
-  const pushDirection = hitNormal.lengthSq() > 0.0001 ? hitNormal : fallbackDirection.clone().multiplyScalar(-1);
+  const pushDirection = moveDirection.lengthSq() > 0.0001
+    ? fallbackDirection.clone().multiplyScalar(-1)
+    : obstacleCollisionNormal(player.position, obstacle);
 
-  player.position.copy(player.previousPosition).addScaledVector(pushDirection, EPSILON);
+  applyCollisionResponse(player, pushDirection, {
+    tangentialDamping: GAME_CONFIG.collision.obstacleTangentialDamping,
+    reboundFactor: GAME_CONFIG.collision.obstacleReboundFactor,
+    minReboundSpeed: GAME_CONFIG.collision.obstacleReboundMinSpeed,
+    reposition: () => {
+      player.position.copy(player.previousPosition).addScaledVector(pushDirection, GAME_CONFIG.collision.separationDistance);
+    },
+  });
+}
 
-  const inwardSpeed = player.velocity.dot(pushDirection);
-  if (inwardSpeed > 0) {
-    player.velocity.addScaledVector(pushDirection, -inwardSpeed);
-  }
-  player.velocity.multiplyScalar(0.18);
+export function resolvePlayerSurfaceCollision(player: PlayerState, surfaceY: number): void {
+  applyCollisionResponse(player, SURFACE_NORMAL, {
+    tangentialDamping: GAME_CONFIG.collision.surfaceTangentialDamping,
+    reboundFactor: GAME_CONFIG.collision.surfaceReboundFactor,
+    minReboundSpeed: GAME_CONFIG.collision.surfaceReboundMinSpeed,
+    reposition: () => {
+      player.position.y = surfaceY - GAME_CONFIG.collision.separationDistance;
+      if (player.previousPosition.y > player.position.y) {
+        player.previousPosition.y = player.position.y;
+      }
+    },
+  });
+}
+
+function applyCollisionResponse(
+  player: PlayerState,
+  pushDirection: Vector3,
+  options: {
+    tangentialDamping: number;
+    reboundFactor: number;
+    minReboundSpeed: number;
+    reposition: () => void;
+  },
+): void {
+  const normal = pushDirection.clone().normalize();
+  options.reposition();
+
+  const normalSpeed = player.velocity.dot(normal);
+  const tangentialVelocity = player.velocity
+    .clone()
+    .addScaledVector(normal, -normalSpeed)
+    .multiplyScalar(options.tangentialDamping);
+  const impactSpeed = Math.max(0, -normalSpeed);
+  const reboundSpeed = Math.max(options.minReboundSpeed, impactSpeed * options.reboundFactor);
+
+  player.velocity.copy(tangentialVelocity).addScaledVector(normal, reboundSpeed);
+  player.velocity.clampLength(0, GAME_CONFIG.ship.maxSpeed);
   player.speed = player.velocity.length();
+  alignPlayerToDirection(player, player.velocity, 1);
 }
 
 function segmentHitsSphere(start: Vector3, end: Vector3, center: Vector3, radius: number): boolean {

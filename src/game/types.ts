@@ -97,6 +97,30 @@ export interface ChunkSyncResult {
   currentCoord: ChunkCoord;
 }
 
+export interface ChunkBuildTimings {
+  totalMs: number;
+  octoboxMs: number;
+  navigationMs: number;
+  obstaclesMs: number;
+  lootMs: number;
+  minesMs: number;
+  serializeMs: number;
+}
+
+export interface DebugTimingSnapshot {
+  frameMs: number;
+  inputMs: number;
+  simulationMs: number;
+  chunkSyncMs: number;
+  worldMs: number;
+  renderMs: number;
+  hydrateMs: number;
+  readyQueueMs: number;
+  workerTotalMs: number;
+  workerOctoboxMs: number;
+  workerSerializeMs: number;
+}
+
 export interface InputState {
   forward: number;
   right: number;
@@ -107,6 +131,7 @@ export interface InputState {
   turnAdjust: number;
   restartPressed: boolean;
   debugTogglePressed: boolean;
+  chunkDebugTogglePressed: boolean;
   fogTogglePressed: boolean;
 }
 

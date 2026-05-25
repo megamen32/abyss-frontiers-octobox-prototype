@@ -115,6 +115,9 @@ function estimateDensity(bounds: AABB, caveBias: number): number {
 
   const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
   const depthDanger = worldDangerLevel(center.y);
+  if (depthDanger <= 0) {
+    return 0;
+  }
   const size = bounds.max.clone().sub(bounds.min);
   const minSize = Math.min(size.x, size.y, size.z);
   const maxLeafSize = getMaxLeafSize();
