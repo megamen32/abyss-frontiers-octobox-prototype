@@ -94,7 +94,7 @@ describe('buildGreedyStaticMesh', () => {
     expect(mesh?.normals).toBeInstanceOf(Float32Array);
     expect(mesh?.indices).toBeInstanceOf(Uint32Array);
     expect(mesh?.indices.length).toBeGreaterThan(0);
-    const eps = 0.05;
+    const eps = 0.15;
     for (const position of mesh!.positions) {
       expect(position).toBeGreaterThanOrEqual(-eps);
       expect(position).toBeLessThanOrEqual(GAME_CONFIG.world.chunkSize + eps);

@@ -2,12 +2,13 @@
 
 import { ChunkGenerator } from './chunkGenerator';
 import { dehydrateChunk } from './chunkPayload';
-import type { ChunkBuildTimings, ChunkCoord } from '../types';
+import type { ChunkBuildTimings, ChunkCoord, Face } from '../types';
 
 interface GenerateChunkRequest {
   type: 'generate';
   seed: number;
   coord: ChunkCoord;
+  forceCaveEntranceFace?: Face;
 }
 
 interface GenerateChunkResponse {
@@ -28,7 +29,9 @@ self.onmessage = (event: MessageEvent<GenerateChunkRequest>) => {
     generator = new ChunkGenerator(event.data.seed);
     currentSeed = event.data.seed;
   }
-  const result = generator.generateProfiled(event.data.coord);
+  const result = generator.generateProfiled(event.data.coord, {
+    forceCaveEntranceFace: event.data.forceCaveEntranceFace,
+  });
   const serializeStart = performance.now();
   const dehydrated = dehydrateChunk(result.chunk);
   const serializeMs = performance.now() - serializeStart;

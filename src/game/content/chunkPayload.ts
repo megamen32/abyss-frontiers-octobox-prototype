@@ -5,6 +5,8 @@ export interface SerializedChunkData {
   key: string;
   coord: ChunkCoord;
   seed: number;
+  isCaveChunk?: boolean;
+  caveEntranceCenter?: [number, number, number];
   bounds: { min: [number, number, number]; max: [number, number, number] };
   cells: Array<{
     id: string;
@@ -23,6 +25,12 @@ export interface SerializedChunkData {
   }>;
   adjacency: [string, string][];
   staticMeshData?: StaticChunkMeshData;
+  staticMeshRepresentsObstacles?: boolean;
+  caveCollisionSamples?: Array<{
+    position: [number, number, number];
+    radius: number;
+    tangent: [number, number, number];
+  }>;
   obstacles: Array<{
     id: string;
     type: Obstacle['type'];
@@ -70,6 +78,8 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
     key: chunk.key,
     coord: chunk.coord,
     seed: chunk.seed,
+    isCaveChunk: chunk.isCaveChunk,
+    caveEntranceCenter: chunk.caveEntranceCenter ? vecToTuple(new Vector3(chunk.caveEntranceCenter.x, chunk.caveEntranceCenter.y, chunk.caveEntranceCenter.z)) : undefined,
     bounds: dehydrateBounds(chunk.bounds),
     cells: chunk.cells.map((cell) => ({
       id: cell.id,
@@ -88,6 +98,12 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
     })),
     adjacency: chunk.adjacency,
     staticMeshData: chunk.staticMeshData,
+    staticMeshRepresentsObstacles: chunk.staticMeshRepresentsObstacles,
+    caveCollisionSamples: chunk.caveCollisionSamples?.map((sample) => ({
+      position: vecToTuple(sample.position),
+      radius: sample.radius,
+      tangent: vecToTuple(sample.tangent),
+    })),
     obstacles: chunk.obstacles.map((obstacle) => ({
       id: obstacle.id,
       type: obstacle.type,
@@ -136,6 +152,8 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
     key: data.key,
     coord: data.coord,
     seed: data.seed,
+    isCaveChunk: data.isCaveChunk,
+    caveEntranceCenter: data.caveEntranceCenter ? { x: data.caveEntranceCenter[0], y: data.caveEntranceCenter[1], z: data.caveEntranceCenter[2] } : undefined,
     bounds: hydrateBounds(data.bounds),
     cells: data.cells.map((cell) => ({
       id: cell.id,
@@ -154,6 +172,12 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
     })),
     adjacency: data.adjacency,
     staticMeshData: data.staticMeshData,
+    staticMeshRepresentsObstacles: data.staticMeshRepresentsObstacles,
+    caveCollisionSamples: data.caveCollisionSamples?.map((sample) => ({
+      position: tupleToVec(sample.position),
+      radius: sample.radius,
+      tangent: tupleToVec(sample.tangent),
+    })),
     obstacles: data.obstacles.map((obstacle) => ({
       id: obstacle.id,
       type: obstacle.type,

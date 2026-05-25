@@ -9,14 +9,17 @@ const SOFT_TURN_ANGLE = MathUtils.degToRad(GAME_CONFIG.ship.softTurnAngleDeg);
 const STALL_ANGLE = MathUtils.degToRad(GAME_CONFIG.ship.stallAngleDeg);
 
 export function createInitialPlayerState(): PlayerState {
+  const spawnAngle = MathUtils.degToRad(15);
+  const spawnDir = new Vector3(0, -Math.sin(spawnAngle), Math.cos(spawnAngle));
+  const spawnSpeed = GAME_CONFIG.ship.baseAcceleration * 0.35;
   return {
     position: new Vector3(GAME_CONFIG.world.spawn.x, GAME_CONFIG.world.spawn.y, GAME_CONFIG.world.spawn.z),
     previousPosition: new Vector3(GAME_CONFIG.world.spawn.x, GAME_CONFIG.world.spawn.y, GAME_CONFIG.world.spawn.z),
-    velocity: new Vector3(0, 0, GAME_CONFIG.ship.baseAcceleration * 0.35),
-    forward: new Vector3(0, 0, 1),
-    thrustForward: new Vector3(0, 0, 1),
-    targetThrustForward: new Vector3(0, 0, 1),
-    speed: GAME_CONFIG.ship.baseAcceleration * 0.35,
+    velocity: spawnDir.clone().multiplyScalar(spawnSpeed),
+    forward: spawnDir.clone(),
+    thrustForward: spawnDir.clone(),
+    targetThrustForward: spawnDir.clone(),
+    speed: spawnSpeed,
     stallAmount: 0,
     radius: GAME_CONFIG.ship.radius,
     hp: GAME_CONFIG.ship.hp,

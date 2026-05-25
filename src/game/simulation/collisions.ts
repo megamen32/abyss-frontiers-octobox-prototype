@@ -1,9 +1,19 @@
 import { Box3, MathUtils, Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { Obstacle, PlayerState } from '../types';
+import type { CaveCollisionSample, Obstacle, PlayerState } from '../types';
 import { alignPlayerToDirection, travelDirection } from './player';
 
 const SURFACE_NORMAL = new Vector3(0, -1, 0);
+const CRT_P0 = new Vector3();
+const CRT_P1 = new Vector3();
+const CRT_P2 = new Vector3();
+const CRT_P3 = new Vector3();
+const CRT_C = new Vector3();
+const CRT_D = new Vector3();
+const CRT_D2 = new Vector3();
+const CRT_DIFF = new Vector3();
+const CRT_CLOSEST = new Vector3();
+const CRT_GRADIENT = new Vector3();
 
 export function overlapsObstacle(position: Vector3, radius: number, obstacle: Obstacle): boolean {
   if (obstacle.type === 'sphere' && obstacle.radius) {
@@ -72,6 +82,114 @@ export function resolvePlayerSurfaceCollision(player: PlayerState, surfaceY: num
       }
     },
   });
+}
+
+export function resolvePlayerCaveCollision(
+  player: PlayerState,
+  samples: CaveCollisionSample[],
+): boolean {
+  if (samples.length < 2) return false;
+
+  let bestSD = Number.POSITIVE_INFINITY;
+  let bestRadius = 0;
+  const n = samples.length;
+
+  for (let seg = 0; seg < n - 1; seg++) {
+    CRT_P0.copy(seg === 0 ? samples[0].position : samples[seg - 1].position);
+    CRT_P1.copy(samples[seg].position);
+    CRT_P2.copy(samples[seg + 1].position);
+    CRT_P3.copy(seg + 2 >= n ? samples[n - 1].position : samples[seg + 2].position);
+
+    let bestT = 0;
+    let bestDistSq = Number.POSITIVE_INFINITY;
+    for (let k = 0; k <= 8; k++) {
+      const t = k / 8;
+      catmullRomVec(CRT_C, CRT_P0, CRT_P1, CRT_P2, CRT_P3, t);
+      const dsq = CRT_C.distanceToSquared(player.position);
+      if (dsq < bestDistSq) {
+        bestDistSq = dsq;
+        bestT = t;
+      }
+    }
+
+    for (let iter = 0; iter < 4; iter++) {
+      catmullRomVec(CRT_C, CRT_P0, CRT_P1, CRT_P2, CRT_P3, bestT);
+      CRT_DIFF.copy(player.position).sub(CRT_C);
+      if (CRT_DIFF.lengthSq() < 1e-10) break;
+
+      catmullRomDeriv(CRT_D, CRT_P0, CRT_P1, CRT_P2, CRT_P3, bestT);
+      catmullRomSecondDeriv(CRT_D2, CRT_P0, CRT_P1, CRT_P2, CRT_P3, bestT);
+      const denom = CRT_D.dot(CRT_D) + CRT_DIFF.dot(CRT_D2);
+      if (Math.abs(denom) < 1e-10) break;
+
+      bestT = MathUtils.clamp(bestT + CRT_DIFF.dot(CRT_D) / denom, 0, 1);
+    }
+
+    catmullRomVec(CRT_C, CRT_P0, CRT_P1, CRT_P2, CRT_P3, bestT);
+    const radius = MathUtils.lerp(samples[seg].radius, samples[seg + 1].radius, bestT);
+    const sd = CRT_C.distanceTo(player.position) - radius;
+
+    if (sd < bestSD) {
+      bestSD = sd;
+      CRT_CLOSEST.copy(CRT_C);
+      bestRadius = radius;
+    }
+  }
+
+  const allowedDist = Math.max(0.15, bestRadius - player.radius - GAME_CONFIG.collision.separationDistance);
+  const currentDist = player.position.distanceTo(CRT_CLOSEST);
+  if (currentDist <= allowedDist) return false;
+
+  CRT_GRADIENT.copy(player.position).sub(CRT_CLOSEST);
+  const gLen = CRT_GRADIENT.length();
+  if (gLen < 1e-8) {
+    CRT_GRADIENT.copy(travelDirection(player)).multiplyScalar(-1);
+  } else {
+    CRT_GRADIENT.divideScalar(gLen);
+  }
+
+  applyCollisionResponse(player, CRT_GRADIENT.clone().multiplyScalar(-1), {
+    tangentialDamping: GAME_CONFIG.collision.obstacleTangentialDamping,
+    reboundFactor: GAME_CONFIG.collision.obstacleReboundFactor,
+    minReboundSpeed: GAME_CONFIG.collision.obstacleReboundMinSpeed,
+    reposition: () => {
+      player.position.copy(CRT_CLOSEST).addScaledVector(CRT_GRADIENT, allowedDist);
+    },
+  });
+  return true;
+}
+
+function catmullRomVec(
+  out: Vector3, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number,
+): Vector3 {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return out.set(
+    0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+    0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+    0.5 * (2 * p1.z + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3),
+  );
+}
+
+function catmullRomDeriv(
+  out: Vector3, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number,
+): Vector3 {
+  const t2 = t * t;
+  return out.set(
+    0.5 * (-p0.x + p2.x + (4 * p0.x - 10 * p1.x + 8 * p2.x - 2 * p3.x) * t + (-3 * p0.x + 9 * p1.x - 9 * p2.x + 3 * p3.x) * t2),
+    0.5 * (-p0.y + p2.y + (4 * p0.y - 10 * p1.y + 8 * p2.y - 2 * p3.y) * t + (-3 * p0.y + 9 * p1.y - 9 * p2.y + 3 * p3.y) * t2),
+    0.5 * (-p0.z + p2.z + (4 * p0.z - 10 * p1.z + 8 * p2.z - 2 * p3.z) * t + (-3 * p0.z + 9 * p1.z - 9 * p2.z + 3 * p3.z) * t2),
+  );
+}
+
+function catmullRomSecondDeriv(
+  out: Vector3, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number,
+): Vector3 {
+  return out.set(
+    0.5 * ((4 * p0.x - 10 * p1.x + 8 * p2.x - 2 * p3.x) + 2 * (-3 * p0.x + 9 * p1.x - 9 * p2.x + 3 * p3.x) * t),
+    0.5 * ((4 * p0.y - 10 * p1.y + 8 * p2.y - 2 * p3.y) + 2 * (-3 * p0.y + 9 * p1.y - 9 * p2.y + 3 * p3.y) * t),
+    0.5 * ((4 * p0.z - 10 * p1.z + 8 * p2.z - 2 * p3.z) + 2 * (-3 * p0.z + 9 * p1.z - 9 * p2.z + 3 * p3.z) * t),
+  );
 }
 
 function applyCollisionResponse(

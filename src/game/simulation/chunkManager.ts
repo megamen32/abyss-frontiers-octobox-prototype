@@ -1,7 +1,8 @@
 import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, ChunkSyncResult } from '../types';
-import { chunkKey, worldToChunkCoord } from '../utils/chunk';
+import { detectCaveChunk } from '../content/caveSystem';
+import type { AABB, ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, Face, ChunkSyncResult } from '../types';
+import { chunkKey, intersectsAabb, worldToChunkCoord } from '../utils/chunk';
 import { chunkEvictionRadius, chunkGenerationRadius } from '../utils/visibility';
 import { hydrateChunk } from '../content/chunkPayload';
 
@@ -10,6 +11,12 @@ interface ChunkWorkerResponse {
   key: string;
   chunk: Parameters<typeof hydrateChunk>[0];
   timings: ChunkBuildTimings;
+}
+
+interface ChunkSyncOptions {
+  caveOnly?: boolean;
+  retentionAabb?: AABB;
+  forcedCaves?: Array<{ coord: ChunkCoord; entranceFace: Face }>;
 }
 
 export class ChunkManager {
@@ -38,34 +45,49 @@ export class ChunkManager {
     });
   }
 
-  syncAround(position: Vector3, forward: Vector3, speed: number): ChunkSyncResult {
+  syncAround(position: Vector3, forward: Vector3, speed: number, options: ChunkSyncOptions = {}): ChunkSyncResult {
     const currentCoord = worldToChunkCoord(position);
     const radius = chunkGenerationRadius();
     const evictRadius = chunkEvictionRadius();
     const wanted = new Set<string>();
     const keepAlive = new Set<string>();
     const added: ChunkData[] = [];
+    const forcedCaves = new Map((options.forcedCaves ?? []).map((entry) => [chunkKey(entry.coord), entry.entranceFace]));
 
     // Build the generation set (inner radius) — request missing chunks from workers.
     for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed)) {
       const key = chunkKey(coord);
+      const forcedEntranceFace = forcedCaves.get(key);
+      if (options.caveOnly && !forcedEntranceFace && !detectCaveChunk(this.seed, coord)) {
+        continue;
+      }
       wanted.add(key);
       keepAlive.add(key);
       if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
         this.pendingKeys.add(key);
         const worker = this.workers[this.roundRobinIndex % this.workers.length];
         this.roundRobinIndex += 1;
-        worker.postMessage({ type: 'generate', seed: this.seed, coord });
+        worker.postMessage({ type: 'generate', seed: this.seed, coord, forceCaveEntranceFace: forcedEntranceFace });
       }
     }
 
     // Build the eviction set (outer radius) — already-loaded chunks in this band are kept alive
     // even though we won't request new ones there.
-    for (let x = -evictRadius; x <= evictRadius; x += 1) {
-      for (let y = -evictRadius; y <= evictRadius; y += 1) {
-        for (let z = -evictRadius; z <= evictRadius; z += 1) {
-          const coord = { x: currentCoord.x + x, y: currentCoord.y + y, z: currentCoord.z + z };
-          keepAlive.add(chunkKey(coord));
+    if (!options.caveOnly) {
+      for (let x = -evictRadius; x <= evictRadius; x += 1) {
+        for (let y = -evictRadius; y <= evictRadius; y += 1) {
+          for (let z = -evictRadius; z <= evictRadius; z += 1) {
+            const coord = { x: currentCoord.x + x, y: currentCoord.y + y, z: currentCoord.z + z };
+            keepAlive.add(chunkKey(coord));
+          }
+        }
+      }
+    }
+
+    if (options.retentionAabb) {
+      for (const chunk of this.activeChunks.values()) {
+        if (intersectsAabb(chunk.bounds, options.retentionAabb)) {
+          keepAlive.add(chunk.key);
         }
       }
     }
@@ -157,10 +179,16 @@ export function prioritizedChunkCoords(
           queue.push({ coord, score: Number.POSITIVE_INFINITY });
           continue;
         }
+        const chunkLen = offset.length();
         const direction = offset.normalize();
         const forwardness = direction.dot(normalizedForward);
+        // Asymmetric generation: full radius forward, half sideways, 1 chunk behind.
+        const maxLen = forwardness > 0.3 ? radius : forwardness > -0.3 ? radius * 0.5 : 1.0;
+        if (chunkLen > maxLen + 0.5) {
+          continue;
+        }
         const predictedDistance = offset.distanceTo(predictedChunkOffset);
-        const distancePenalty = offset.length() * 0.28;
+        const distancePenalty = chunkLen * 0.28;
         const verticalPenalty = Math.abs(direction.y) * 0.15;
         queue.push({
           coord,

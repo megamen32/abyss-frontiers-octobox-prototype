@@ -1,8 +1,9 @@
 import {
+  AdditiveBlending,
+  BackSide,
   Box3,
   Box3Helper,
   AmbientLight,
-  BoxGeometry,
   Color,
   DirectionalLight,
   Euler,
@@ -11,11 +12,10 @@ import {
   LineSegments,
   MathUtils,
   Mesh,
-  MeshBasicMaterial,
-  MeshStandardMaterial,
   PerspectiveCamera,
   PlaneGeometry,
   Scene,
+  ShaderMaterial,
   SphereGeometry,
   Line,
   Vector3,
@@ -33,8 +33,10 @@ import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
 import { fogChunkRenderRadius, fogDensity, fogVisibilityDistance } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
-import { createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
+import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
 import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 type PooledChunkObject = Group | Mesh;
 type ChunkRenderGroup = {
@@ -44,6 +46,7 @@ type ChunkRenderGroup = {
   debug: Group | null;
   pooled: PooledChunkObject[];
   staticMesh: Mesh | null;
+  blackHoleMesh: Mesh | null;
   coord: ChunkCoord;
   spawnCursor: number;
 };
@@ -75,6 +78,8 @@ export class RenderApp {
   private readonly debugVelocityRay = this.debugRenderer.createDebugRay('#00e5ff');
   private readonly debugCameraRay = this.debugRenderer.createDebugRay('#ffe600');
   private readonly debugMineSegs: LineSegments = this.debugRenderer.createDebugSegments('#ff4444', 32);
+  private prevYaw = 0;
+  private prevPitch = -0.28;
   private readonly cameraFocus = new Vector3(
     GAME_CONFIG.world.spawn.x,
     GAME_CONFIG.world.spawn.y,
@@ -89,7 +94,8 @@ export class RenderApp {
   );
   private readonly sceneFog = new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), fogDensity());
   private readonly ambientLight = new AmbientLight(new Color('#8fb8d2'), GAME_CONFIG.visuals.surfaceAmbientIntensity);
-  private readonly waterSurface = this.createWaterSurface();
+  private readonly fogPlane = this.createFogPlane();
+  private readonly skySphere = this.createSkySphere();
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private debugUiVisible = false;
@@ -112,7 +118,8 @@ export class RenderApp {
 
     this.scene.fog = this.sceneFog;
     this.scene.add(this.world);
-    this.world.add(this.waterSurface);
+    this.scene.add(this.skySphere);
+    this.world.add(this.fogPlane);
     this.setupLights();
     this.setupPlayerMesh();
     this.world.add(this.visibleRadiusHelper, this.interactiveRadiusHelper, this.simulationRadiusHelper);
@@ -127,6 +134,7 @@ export class RenderApp {
     for (const chunk of this.chunkGroups.values()) {
       this.releaseChunkObjects(chunk);
       chunk.staticMesh?.geometry.dispose();
+      chunk.blackHoleMesh?.geometry.dispose();
     }
     this.chunkGroups.clear();
     this.renderer.dispose();
@@ -170,6 +178,7 @@ export class RenderApp {
       }
       this.releaseChunkObjects(existing);
       existing.staticMesh?.geometry.dispose();
+      existing.blackHoleMesh?.geometry.dispose();
       this.world.remove(existing.group);
       if (existing.debug) {
         this.world.remove(existing.debug);
@@ -183,6 +192,10 @@ export class RenderApp {
       if (staticMesh) {
         group.add(staticMesh);
       }
+      const blackHole = createBlackHoleEntrance(chunk);
+      if (blackHole) {
+        group.add(blackHole);
+      }
       const debug = this.debugEnabled && this.chunkDebugEnabled ? this.debugRenderer.createChunkDebug(chunk) : null;
       this.world.add(group);
       if (debug) {
@@ -195,6 +208,7 @@ export class RenderApp {
         debug,
         pooled: [],
         staticMesh,
+        blackHoleMesh: blackHole,
         coord: chunk.coord,
         spawnCursor: 0,
       });
@@ -268,6 +282,12 @@ export class RenderApp {
     const hudCameraStart = performance.now();
     this.updateCameraFocus(frame.player.position, desiredLookDirection);
 
+    const MAX_DELTA = 10 * Math.PI / 180;
+    this.cameraState.yaw = this.prevYaw + MathUtils.clamp(this.cameraState.yaw - this.prevYaw, -MAX_DELTA, MAX_DELTA);
+    this.cameraState.pitch = this.prevPitch + MathUtils.clamp(this.cameraState.pitch - this.prevPitch, -MAX_DELTA, MAX_DELTA);
+    this.prevYaw = this.cameraState.yaw;
+    this.prevPitch = this.cameraState.pitch;
+
     const cameraOffset = new Vector3(0, GAME_CONFIG.camera.height, -GAME_CONFIG.camera.distance)
       .applyAxisAngle(new Vector3(1, 0, 0), this.cameraState.pitch)
       .applyAxisAngle(new Vector3(0, 1, 0), this.cameraState.yaw);
@@ -304,6 +324,7 @@ export class RenderApp {
       1 - Math.exp(-6 * GAME_CONFIG.camera.smoothness),
     );
     this.camera.lookAt(this.cameraLookAt);
+    this.skySphere.position.copy(this.camera.position);
 
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
 
@@ -393,11 +414,15 @@ export class RenderApp {
 
       const core = mesh.getObjectByName('mine-core') as Mesh | undefined;
       const telegraph = mesh.getObjectByName('mine-telegraph') as Line | undefined;
-      const scale = target.data.state === 'idle' ? 1 : target.data.state === 'targeting' ? 1.08 : 1.18;
+      const scale = target.data.state === 'idle' ? 1
+        : target.data.state === 'targeting' ? 1.08
+        : target.data.state === 'rocket' ? 1.12
+        : 1.18;
       core?.scale.setScalar(target.data.radius * scale);
 
       if (telegraph) {
-        telegraph.visible = target.data.state === 'targeting' && target.data.targetPosition !== null;
+        telegraph.visible = (target.data.state === 'targeting' && target.data.targetPosition !== null)
+          || target.data.state === 'rocket';
         if (telegraph.visible && target.data.targetPosition) {
           const positions = telegraph.geometry.attributes.position.array as Float32Array;
           positions[0] = 0;
@@ -406,6 +431,19 @@ export class RenderApp {
           positions[3] = target.data.targetPosition.x - target.data.position.x;
           positions[4] = target.data.targetPosition.y - target.data.position.y;
           positions[5] = target.data.targetPosition.z - target.data.position.z;
+          telegraph.geometry.attributes.position.needsUpdate = true;
+          telegraph.geometry.computeBoundingSphere();
+        } else if (telegraph.visible && target.data.state === 'rocket') {
+          const vDir = target.data.velocity.lengthSq() > 0.0001
+            ? target.data.velocity.clone().normalize()
+            : new Vector3(0, 1, 0);
+          const positions = telegraph.geometry.attributes.position.array as Float32Array;
+          positions[0] = 0;
+          positions[1] = 0;
+          positions[2] = 0;
+          positions[3] = vDir.x * 3;
+          positions[4] = vDir.y * 3;
+          positions[5] = vDir.z * 3;
           telegraph.geometry.attributes.position.needsUpdate = true;
           telegraph.geometry.computeBoundingSphere();
         }
@@ -622,7 +660,7 @@ export class RenderApp {
         }
         if (mine.state === 'targeting' && mine.targetPosition) {
           minePairs.push([mine.position.clone(), mine.targetPosition.clone()]);
-        } else if (mine.state === 'launched') {
+        } else if (mine.state === 'launched' || mine.state === 'rocket') {
           const ahead = mine.position.clone().addScaledVector(mine.velocity.clone().normalize(), 8);
           minePairs.push([mine.position.clone(), ahead]);
         } else {
@@ -697,17 +735,42 @@ export class RenderApp {
     this.scene.add(rimLight);
   }
 
-  private createWaterSurface(): Mesh {
+  private createFogPlane(): Mesh {
     const geo = new PlaneGeometry(8000, 8000);
     geo.rotateX(-Math.PI / 2);
-    const mat = new MeshBasicMaterial({
-      color: new Color(GAME_CONFIG.visuals.waterColor),
+    const mat = new ShaderMaterial({
+      uniforms: {
+        colorCenter: { value: new Color(GAME_CONFIG.visuals.fogPlaneColor) },
+        colorEdge: { value: new Color(GAME_CONFIG.visuals.fogColor) },
+        opacity: { value: GAME_CONFIG.visuals.fogPlaneOpacity },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 colorCenter;
+        uniform vec3 colorEdge;
+        uniform float opacity;
+        varying vec2 vUv;
+        void main() {
+          vec2 centered = vUv * 2.0 - 1.0;
+          float radial = clamp(length(centered), 0.0, 1.0);
+          float glow = 1.0 - smoothstep(0.18, 1.0, radial);
+          float alpha = glow * opacity;
+          vec3 color = mix(colorEdge, colorCenter, glow);
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
       transparent: true,
-      opacity: GAME_CONFIG.visuals.waterOpacity,
       depthWrite: false,
+      blending: AdditiveBlending,
     });
     const mesh = new Mesh(geo, mat);
-    mesh.position.y = GAME_CONFIG.world.spawn.y;
+    mesh.position.y = GAME_CONFIG.world.spawn.y + 5;
     mesh.renderOrder = 1;
     return mesh;
   }
@@ -718,21 +781,90 @@ export class RenderApp {
     this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyColor), d));
     this.ambientLight.intensity = GAME_CONFIG.visuals.surfaceAmbientIntensity
       + (GAME_CONFIG.visuals.abyssAmbientIntensity - GAME_CONFIG.visuals.surfaceAmbientIntensity) * d;
+    const skyMat = this.skySphere.material as ShaderMaterial;
+    (skyMat.uniforms.colorTop.value as Color).copy(
+      new Color(GAME_CONFIG.visuals.skyColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyColor), d),
+    );
+    (skyMat.uniforms.colorBottom.value as Color).copy(
+      new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d),
+    );
+    const fogPlaneMat = this.fogPlane.material as ShaderMaterial;
+    (fogPlaneMat.uniforms.colorCenter.value as Color).copy(
+      new Color(GAME_CONFIG.visuals.fogPlaneColor).lerp(new Color(GAME_CONFIG.visuals.fogColor), d * 0.75),
+    );
+    (fogPlaneMat.uniforms.colorEdge.value as Color).copy(
+      new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d),
+    );
+    fogPlaneMat.uniforms.opacity.value = GAME_CONFIG.visuals.fogPlaneOpacity * (1 - d * 0.55);
+  }
+
+  private createSkySphere(): Mesh {
+    const geo = new SphereGeometry(9000, 8, 6);
+    const mat = new ShaderMaterial({
+      uniforms: {
+        colorTop: { value: new Color(GAME_CONFIG.visuals.skyColor) },
+        colorBottom: { value: new Color(GAME_CONFIG.visuals.fogColor) },
+      },
+      vertexShader: `
+        varying float vY;
+        void main() {
+          vY = normalize(position).y;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 colorTop;
+        uniform vec3 colorBottom;
+        varying float vY;
+        void main() {
+          float t = smoothstep(-0.4, 0.5, vY);
+          gl_FragColor = vec4(mix(colorBottom, colorTop, t), 1.0);
+        }
+      `,
+      side: BackSide,
+      depthWrite: false,
+    });
+    const mesh = new Mesh(geo, mat);
+    mesh.renderOrder = -1;
+    return mesh;
   }
 
   private setupPlayerMesh(): void {
-    const hull = new Mesh(
-      new SphereGeometry(0.72, 18, 18),
-      new MeshStandardMaterial({ color: new Color('#d9edf9'), metalness: 0.35, roughness: 0.4 }),
-    );
-    hull.scale.set(1, 0.72, 1.1);
-    const prow = new Mesh(
-      new BoxGeometry(0.28, 0.22, 0.9),
-      new MeshStandardMaterial({ color: new Color('#5dd1ff'), emissive: new Color('#0d3048') }),
-    );
-    prow.position.z = 0.7;
-    this.playerMesh.add(hull, prow, this.playerRadius);
+    this.playerMesh.add(this.playerRadius);
     this.scene.add(this.playerMesh);
+    this.loadShipModel();
+  }
+
+  private loadShipModel(): void {
+    const base = import.meta.env.BASE_URL as string;
+    const modelPath = `${base}models/speedboat/`;
+    const mtlLoader = new MTLLoader();
+    mtlLoader.setPath(modelPath);
+    mtlLoader.load('speedboat.mtl', (materials) => {
+      materials.preload();
+      const objLoader = new OBJLoader();
+      objLoader.setMaterials(materials);
+      objLoader.setPath(modelPath);
+      objLoader.load('speedboat.obj', (obj) => {
+        // OBJ: nose at -Y, deck at -Z → Three.js forward=+Z, up=+Y.
+        // Rx(+90°) Ry(180°): maps OBJ(x,y,z) → (-x, -z, -y).
+        obj.rotation.x = Math.PI / 2;
+        obj.rotation.y = Math.PI;
+        obj.rotation.z = Math.PI;
+        // Scale: OBJ Y range ≈ 442 units → target ~3.5 game units long.
+        const scale = 3.5 / 442.5;
+        obj.scale.setScalar(scale);
+        // Center the model on the player origin.
+        obj.updateMatrixWorld(true);
+        const box = new Box3().setFromObject(obj);
+        const center = new Vector3();
+        box.getCenter(center);
+        obj.position.sub(center);
+        // Sit slightly below center so it doesn't clip camera rig.
+        obj.position.y = 0.0;
+        this.playerMesh.add(obj);
+      });
+    });
   }
 
   private installInput(): void {

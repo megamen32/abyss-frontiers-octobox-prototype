@@ -292,6 +292,49 @@ describe('ChunkGenerator', () => {
     expect(first.mines.every((mine) => mine.state === 'idle')).toBe(true);
   });
 
+  it('transitions deep mines to rocket state and inherits velocity on burst', () => {
+    const generator = new ChunkGenerator(133742);
+    let chunk = generator.generate({ x: 0, y: -8, z: 0 });
+
+    if (chunk.mines.length === 0) {
+      for (let x = -1; x <= 1 && chunk.mines.length === 0; x += 1) {
+        for (let y = -9; y <= -7 && chunk.mines.length === 0; y += 1) {
+          for (let z = -1; z <= 1 && chunk.mines.length === 0; z += 1) {
+            chunk = generator.generate({ x, y, z });
+          }
+        }
+      }
+    }
+
+    expect(chunk.mines.length).toBeGreaterThan(0);
+
+    const mine = chunk.mines[0];
+    const player = createInitialPlayerState();
+
+    // Deep mine skips idle — immediately enters rocket when processed
+    player.position.copy(mine.position).add(new Vector3(0, 0, -mine.triggerRadius * 0.5));
+    updateMinesInChunk(chunk, player, 0.1);
+    expect(mine.state).toBe('rocket');
+
+    // Rocket continuously accelerates (velocity grows each frame)
+    const v0 = mine.velocity.length();
+    expect(v0).toBeGreaterThan(0);
+    updateMinesInChunk(chunk, player, 0.1);
+    expect(mine.velocity.length()).toBeGreaterThan(v0);
+
+    // Place mine behind the player within burst distance.
+    // Both existing velocity and burst direction point toward player (same axis),
+    // so launched speed = rocket velocity + mine.speed (with near-perfect alignment).
+    const burstDist = GAME_CONFIG.mines.rocketToLaunchedDistance;
+    mine.position.copy(player.position).add(new Vector3(0, 0, -burstDist * 0.5));
+    mine.velocity.set(0, 0, 15);
+    const rocketSpeed = mine.velocity.length();
+    updateMinesInChunk(chunk, player, 0.1);
+
+    expect(mine.state).toBe('launched');
+    expect(mine.velocity.length()).toBeGreaterThan(rocketSpeed + mine.speed * 0.9);
+  });
+
   it('telegraphs mine launch before firing', () => {
     const generator = new ChunkGenerator(133742);
     let chunk = generator.generate({ x: 0, y: 0, z: 0 });

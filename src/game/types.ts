@@ -5,7 +5,7 @@ export type ObstacleType = 'sphere' | 'box';
 export type ObstacleMotion = 'static' | 'slow_rotate' | 'linear_drift';
 export type CellKind = 'free' | 'obstacle' | 'empty';
 export type GenerationMode = 'scatter' | 'cave';
-export type MineState = 'idle' | 'targeting' | 'launched' | 'dead';
+export type MineState = 'idle' | 'targeting' | 'launched' | 'dead' | 'rocket';
 export type GauntletType =
   | 'left_passage'
   | 'right_passage'
@@ -34,6 +34,12 @@ export interface CaveSample {
   normal: Vector3;
   binormal: Vector3;
   radius: number;
+}
+
+export interface CaveCollisionSample {
+  position: Vector3;
+  radius: number;
+  tangent: Vector3;
 }
 
 export interface CaveSystem {
@@ -124,11 +130,15 @@ export interface ChunkData {
   coord: ChunkCoord;
   seed: number;
   bounds: AABB;
+  isCaveChunk?: boolean;
+  caveEntranceCenter?: { x: number; y: number; z: number };
   cells: LeafCell[];
   portals: Portal[];
   adjacency: [string, string][];
   obstacles: Obstacle[];
   staticMeshData?: StaticChunkMeshData;
+  staticMeshRepresentsObstacles?: boolean;
+  caveCollisionSamples?: CaveCollisionSample[];
   loot: Loot[];
   mines: Mine[];
 }

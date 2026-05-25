@@ -14,7 +14,7 @@ export const GAME_CONFIG = {
     // at baseAcceleration * (1 + depthAccelerationScale). Depth ramp distance is world.depthDifficultyRamp.
     depthAccelerationScale: 0.95,
     // Drag fraction removed per second when flying straight. velocity *= (1 - baseDrag * dt) each frame.
-    baseDrag: 0.1,
+    baseDrag: 0.2,
     // Additional drag added when turning. Scales linearly from 0 (straight) to 1 (full stall angle).
     // Total drag = baseDrag + turnRatio*turnDrag + stallAmount*stallDrag + speedLimitDrag.
     turnDrag: 0.34,
@@ -26,17 +26,17 @@ export const GAME_CONFIG = {
     speedLimitExtraDrag: 1.6,
     // Angle (degrees) between velocity and thrust below which no stall effect occurs. Smooth turning
     // zone — drag is only baseDrag + a small turnDrag fraction.
-    softTurnAngleDeg: 25,
+    softTurnAngleDeg: 45,
     // Angle (degrees) at which full stall drag applies. Between softTurnAngleDeg and stallAngleDeg
     // the stall effect fades in via smoothstep.
-    stallAngleDeg: 65,
+    stallAngleDeg: 90,
     // Speed at which thrustForward tracks targetThrustForward via slerp. Higher values make the ship
     // respond to steering input more instantly; lower values add inertia. Unit: 1/s (exponential rate).
-    steeringResponsiveness: 5.2,
+    steeringResponsiveness: 20.2,
     // Rate at which targetThrustForward drifts back toward thrustForward when no steering key is held.
     // Acts as angular drag — prevents the ship from spinning freely after a turn. Unit: 1/s.
     // 0 = no damping, higher = faster return to neutral. ~4 gives ~250ms settling time.
-    steeringAngularDrag: 4.0,
+    steeringAngularDrag: 6.0,
     // Thrust efficiency when completely stalled (angle ≥ stallAngleDeg). 0 = no thrust while stalled,
     // 1 = full thrust regardless. Current value keeps 25 % thrust at max stall.
     thrustEfficiencyAtFullStall: 0.8,
@@ -57,7 +57,7 @@ export const GAME_CONFIG = {
     distance: 8.5,
     // Default height of the camera above the ship (units). Combined with distance, defines the base
     // camera position in ship-local space before yaw/pitch adjustment.
-    height: 3.4,
+    height: 5.4,
     // Exponential smoothing factor for camera position and lookAt. Lower = more lag, higher = snappier.
     // Used as the rate in: blend = 1 - exp(-k * smoothness * dt).
     smoothness: 0.3,
@@ -72,20 +72,20 @@ export const GAME_CONFIG = {
     keyboardPitchSpeed: 1.45,
     // Half-width of the dead-zone cone (radians) in which small yaw deviations don't trigger camera
     // auto-follow. Prevents the camera from wiggling for tiny heading changes.
-    deadlockHalfWidth: 0.65,
+    deadlockHalfWidth: 0.7,
     // Half-height of the dead-zone cone (radians) for pitch. Same purpose as deadlockHalfWidth.
-    deadlockHalfHeight: 0.4,
+    deadlockHalfHeight: 0.7,
     // When the angle between the camera look direction and the thrust direction exceeds this value
     // (degrees), the thrust-look assist starts blending the camera toward the ship's flight path.
-    thrustLookAssistStartAngleDeg: 12,
+    thrustLookAssistStartAngleDeg: 30,
     // Angle (degrees) at which the thrust-look assist reaches full blend strength.
-    thrustLookAssistFullAngleDeg: 42,
+    thrustLookAssistFullAngleDeg: 60,
     // Minimum ship speed (units/s) for the thrust-look assist to activate. Below this threshold the
     // camera stays in free orbit regardless of angle.
-    thrustLookAssistSpeedThreshold: 7.5,
+    thrustLookAssistSpeedThreshold: 17,
     // Maximum blend weight [0–1] the thrust-look assist applies. 1 = camera fully snaps to thrust
     // direction; 0.72 leaves 28 % of the player's manual aim intact.
-    thrustLookAssistMaxBlend: 0.72,
+    thrustLookAssistMaxBlend: 0.4,
     // Vertical field of view in degrees.
     fov: 68,
     // Minimum camera pitch (radians, negative = looking down). Clamps the orbit to avoid flipping.
@@ -198,7 +198,7 @@ export const GAME_CONFIG = {
     chunkBuildWorkers: 2,
     // Content generation strategy. 'scatter' = random octobox-based obstacles.
     // Future modes may include 'cave' for fully procedural cave tunnels.
-    generationMode: 'scatter',
+    generationMode: 'cave',
     // Cave bias value at or above which a cell is considered part of the cave core (void interior).
     // Core cells are mostly kept empty to form the tunnel passage.
     caveCoreBias: 0.72,
@@ -255,11 +255,23 @@ export const GAME_CONFIG = {
     radius: 1.2,
     // HP damage dealt when the mine hits the ship.
     damage: 34,
+    // Depth (units below surface) at which mines switch from passive idle to rocket homing.
+    deepMineDepth: 500,
+    // Continuous acceleration (units/s²) during rocket homing phase. The mine accelerates
+    // toward a predicted intercept point each frame instead of setting velocity instantly.
+    rocketAcceleration: 5,
+    // Maximum speed cap during rocket phase (units/s). Prevents the homing speed from
+    // growing unbounded over long approach distances.
+    rocketMaxSpeed: 35,
+    // Distance (units) from the player at which the rocket phase ends and the final
+    // launched burst begins. At this point the mine inherits its rocket velocity and
+    // adds an aimed burst toward the player.
+    rocketToLaunchedDistance: 6,
   },
 
   cave: {
     // Master switch — disables all cave generation when false.
-    enabled: true,
+    enabled: false,
     // Probability [0–1] per chunk face per chunk that a cave entrance spawns. Checked independently
     // for each of the three negative faces (nx, ny, nz) per chunk.
     entranceProbability: 0.06,
@@ -286,10 +298,21 @@ export const GAME_CONFIG = {
     // Distance (units) between obstacle rings in gauntlet sections of caves.
     gauntletSpacing: 10,
     // Number of segments used to approximate the circular cross-section of the tunnel.
-    ringSegments: 12,
+    ringSegments: 24,
     // Step size (units) used when sampling the cave SDF to place obstacles. Smaller = more accurate
     // but slower generation.
     sampleStep: 2,
+  },
+
+  blackHole: {
+    // Minimum depth (units below surface) where black hole caves appear.
+    minDepth: 200,
+    // Maximum depth where black hole caves appear.
+    maxDepth: 1000,
+    // Radius of the black hole entrance sphere (diameter = radius * 2).
+    entranceRadius: 128,
+    // Number of ring segments for the sphere mesh.
+    sphereSegments: 32,
   },
 
   visuals: {
@@ -299,7 +322,7 @@ export const GAME_CONFIG = {
     debugChunkRadius: 0,
     // How many chunks of visibility the fog allows. This is the PRIMARY fog parameter — density
     // is computed from it so generation pop-in is always hidden.
-    // fogDensity = -log(0.03) / ((fogRenderRadiusChunks - 0.5) * chunkSize)
+    // fogDensity = sqrt(-log(0.03)) / ((fogRenderRadiusChunks - 0.5) * chunkSize)
     fogRenderRadiusChunks: 3,
     // Sky and fog color near the surface (dangerLevel = 0).
     skyColor: 0x03111a,
@@ -311,8 +334,9 @@ export const GAME_CONFIG = {
     surfaceAmbientIntensity: 1.6,
     // Ambient light intensity at full abyss depth (dim, oppressive darkness).
     abyssAmbientIntensity: 0.35,
-    // Color and opacity of the water surface plane visible from below.
-    waterColor: 0x1a6a9e,
-    waterOpacity: 0.65,
+    // Color and opacity of the bright fog plane near the surface. This is a soft light veil,
+    // not a hard water sheet.
+    fogPlaneColor: 0x6fc9ff,
+    fogPlaneOpacity: 0.3,
   },
 } as const;

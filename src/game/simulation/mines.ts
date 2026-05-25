@@ -2,11 +2,54 @@ import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { ChunkData, Mine, Obstacle, PlayerState } from '../types';
 import { worldToChunkCoord } from '../utils/chunk';
+import { depthBelowSurface } from '../utils/depth';
 import { travelDirection } from './player';
 
+function chunkDepth(chunk: ChunkData): number {
+  return depthBelowSurface((chunk.coord.y + 0.5) * GAME_CONFIG.world.chunkSize);
+}
+
 export function updateMinesInChunk(chunk: ChunkData, player: PlayerState, dt: number): void {
+  const isDeep = chunkDepth(chunk) >= GAME_CONFIG.mines.deepMineDepth;
+
   for (const mine of chunk.mines) {
     if (mine.state === 'dead') {
+      continue;
+    }
+
+    if (mine.state === 'idle' && isDeep) {
+      mine.state = 'rocket';
+      mine.targetPosition = null;
+    }
+
+    if (mine.state === 'rocket') {
+      const aimTarget = player.position
+        .clone()
+        .add(player.velocity.clone().multiplyScalar(GAME_CONFIG.mines.leadTime));
+      const direction = aimTarget.sub(mine.position);
+      if (direction.lengthSq() > 0.0001) {
+        mine.velocity.addScaledVector(direction.normalize(), GAME_CONFIG.mines.rocketAcceleration * dt);
+      }
+      if (mine.velocity.length() > GAME_CONFIG.mines.rocketMaxSpeed) {
+        mine.velocity.setLength(GAME_CONFIG.mines.rocketMaxSpeed);
+      }
+      mine.position.addScaledVector(mine.velocity, dt);
+
+      const distance = mine.position.distanceTo(player.position);
+      if (distance <= GAME_CONFIG.mines.rocketToLaunchedDistance) {
+        const burstDir = player.position.clone().sub(mine.position).normalize();
+        mine.velocity.addScaledVector(burstDir, mine.speed);
+        mine.state = 'launched';
+      }
+
+      const mineChunk = worldToChunkCoord(mine.position);
+      if (
+        mineChunk.x !== chunk.coord.x ||
+        mineChunk.y !== chunk.coord.y ||
+        mineChunk.z !== chunk.coord.z
+      ) {
+        mine.state = 'dead';
+      }
       continue;
     }
 

@@ -9,11 +9,12 @@ const FOG_THRESHOLD = 0.03;
  * to give a half-chunk safety margin — the last rendered chunk is fully invisible
  * before its far face is reached.
  *
- * density = -log(threshold) / hideDistance
+ * Three.js FogExp2 uses: opacity = exp(-density² × dist²)
+ * Solving for density: density = sqrt(-log(threshold)) / hideDistance
  */
 export function fogDensity(): number {
   const hideDistance = (GAME_CONFIG.visuals.fogRenderRadiusChunks - 0.5) * GAME_CONFIG.world.chunkSize;
-  return -Math.log(FOG_THRESHOLD) / hideDistance;
+  return Math.sqrt(-Math.log(FOG_THRESHOLD)) / hideDistance;
 }
 
 export function fogVisibilityDistance(): number {

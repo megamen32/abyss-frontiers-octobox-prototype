@@ -1,9 +1,10 @@
 import { Box3, Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { ChunkCoord, ChunkData, Obstacle } from '../types';
+import type { AABB, ChunkCoord, ChunkData, Face, Obstacle } from '../types';
+import { detectCaveChunk } from '../content/caveSystem';
 import { RenderApp } from '../render/App';
 import { ChunkManager } from './chunkManager';
-import { overlapsObstacle, resolvePlayerObstacleCollision, resolvePlayerSurfaceCollision, sweptSphereHitsObstacle } from './collisions';
+import { overlapsObstacle, resolvePlayerCaveCollision, resolvePlayerObstacleCollision, resolvePlayerSurfaceCollision, sweptSphereHitsObstacle } from './collisions';
 import { InputController } from './input';
 import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
@@ -11,6 +12,7 @@ import { applyRuntimeTuning } from './runtimeTuning';
 import { applyKeyboardSteering } from './steering';
 import { ShipPredictor } from './shipPredictor';
 import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
+import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
 
@@ -136,8 +138,18 @@ export class Game {
       this.profiler.addSample('simulationMs', performance.now() - simulationStart);
 
       const chunkSyncStart = performance.now();
-      const travel = travelDirection(this.player);
-      const sync = this.chunkManager.syncAround(this.player.position, travel, this.player.speed);
+      const predictor = ShipPredictor.forPlayer(this.player);
+      const syncState = this.resolveChunkSyncState(predictor);
+      const sync = this.chunkManager.syncAround(
+        this.player.position,
+        syncState.forward,
+        this.player.speed,
+        {
+          caveOnly: syncState.caveOnly,
+          retentionAabb: syncState.retentionAabb,
+          forcedCaves: syncState.forcedCaves,
+        },
+      );
       this.currentChunk = sync.currentCoord;
       this.render.syncChunks(sync.added, sync.removed);
       this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
@@ -222,6 +234,12 @@ export class Game {
   }
 
   private handleCollisions(chunk: ChunkData): void {
+    if (chunk.isCaveChunk && chunk.caveCollisionSamples && resolvePlayerCaveCollision(this.player, chunk.caveCollisionSamples)) {
+      applyDamage(this.player, GAME_CONFIG.collision.surfaceDamage);
+      if (!this.player.alive) {
+        return;
+      }
+    }
     for (const obstacle of chunk.obstacles) {
       const collides =
         sweptSphereHitsObstacle(this.player.previousPosition, this.player.position, this.player.radius, obstacle)
@@ -259,6 +277,86 @@ export class Game {
     }
     return chunks;
   }
+
+  private resolveChunkSyncState(predictor: ShipPredictor): {
+    forward: Vector3;
+    caveOnly: boolean;
+    retentionAabb?: AABB;
+    forcedCaves: Array<{ coord: ChunkCoord; entranceFace: Face }>;
+  } {
+    const currentCoord = worldToChunkCoord(this.player.position);
+    const currentChunk = this.chunkManager.activeChunks.get(chunkKey(currentCoord));
+    const inCave = currentChunk?.isCaveChunk === true;
+    const horizon = Math.max(1, GAME_CONFIG.world.generationLookaheadSeconds);
+    const forcedCaves = this.buildForcedCaves(predictor, horizon);
+    if (!inCave) {
+      return {
+        forward: travelDirection(this.player),
+        caveOnly: false,
+        retentionAabb: undefined,
+        forcedCaves,
+      };
+    }
+
+    const forcedKeys = new Set(forcedCaves.map((fc) => chunkKey(fc.coord)));
+    const exitSoon = [1, Math.min(2, horizon), horizon]
+      .some((time) => {
+        const coord = worldToChunkCoord(predictor.predict(time));
+        const key = chunkKey(coord);
+        if (forcedKeys.has(key)) return false;
+        const loaded = this.chunkManager.activeChunks.get(key);
+        return loaded ? loaded.isCaveChunk !== true : detectCaveChunk(this.seed, coord) === null;
+      });
+
+    return {
+      forward: predictor.predictDirection(Math.min(1.5, horizon)),
+      caveOnly: !exitSoon,
+      retentionAabb: !exitSoon ? this.buildRetentionAabb(predictor, horizon) : undefined,
+      forcedCaves,
+    };
+  }
+
+  private buildForcedCaves(
+    predictor: ShipPredictor,
+    horizon: number,
+  ): Array<{ coord: ChunkCoord; entranceFace: Face }> {
+    const depth = this.spawnPosition.y - this.player.position.y;
+    if (depth < GAME_CONFIG.blackHole.minDepth || depth > GAME_CONFIG.blackHole.maxDepth) {
+      return [];
+    }
+    const direction = predictor.predictDirection(Math.min(1.5, horizon));
+    const entranceFace = oppositeFace(faceFromDirection(direction));
+    const mouthRadiusChunks = Math.max(
+      1,
+      Math.ceil(GAME_CONFIG.blackHole.entranceRadius / GAME_CONFIG.world.chunkSize),
+    );
+    const coords = new Map<string, { coord: ChunkCoord; entranceFace: Face }>();
+    for (const time of [Math.min(1.5, horizon), Math.min(3, horizon), horizon]) {
+      const center = worldToChunkCoord(predictor.predict(time));
+      for (const coord of expandCaveFront(center, entranceFace, mouthRadiusChunks)) {
+        coords.set(chunkKey(coord), { coord, entranceFace });
+      }
+    }
+    return [...coords.values()];
+  }
+
+  private buildRetentionAabb(predictor: ShipPredictor, horizon: number): AABB {
+    const start = this.player.position;
+    const end = predictor.predict(horizon);
+    const padding = GAME_CONFIG.world.chunkSize * 1.5;
+    return {
+      min: new Vector3(
+        Math.min(start.x, end.x) - padding,
+        Math.min(start.y, end.y) - padding,
+        Math.min(start.z, end.z) - padding,
+      ),
+      max: new Vector3(
+        Math.max(start.x, end.x) + padding,
+        Math.max(start.y, end.y) + padding,
+        Math.max(start.z, end.z) + padding,
+      ),
+    };
+  }
 }
 
 function updateObstacleMotion(chunk: ChunkData, dt: number): void {
@@ -273,6 +371,56 @@ function updateObstacleMotion(chunk: ChunkData, dt: number): void {
     }
     obstacle.phase += dt * obstacle.angularSpeed;
   }
+}
+
+function faceFromDirection(direction: Vector3): Face {
+  const ax = Math.abs(direction.x);
+  const ay = Math.abs(direction.y);
+  const az = Math.abs(direction.z);
+  if (ax >= ay && ax >= az) {
+    return direction.x >= 0 ? 'px' : 'nx';
+  }
+  if (ay >= az) {
+    return direction.y >= 0 ? 'py' : 'ny';
+  }
+  return direction.z >= 0 ? 'pz' : 'nz';
+}
+
+function oppositeFace(face: Face): Face {
+  switch (face) {
+    case 'px': return 'nx';
+    case 'nx': return 'px';
+    case 'py': return 'ny';
+    case 'ny': return 'py';
+    case 'pz': return 'nz';
+    case 'nz': return 'pz';
+  }
+}
+
+function expandCaveFront(center: ChunkCoord, entranceFace: Face, radius: number): ChunkCoord[] {
+  const coords: ChunkCoord[] = [];
+  if (entranceFace === 'px' || entranceFace === 'nx') {
+    for (let y = -radius; y <= radius; y += 1) {
+      for (let z = -radius; z <= radius; z += 1) {
+        coords.push({ x: center.x, y: center.y + y, z: center.z + z });
+      }
+    }
+    return coords;
+  }
+  if (entranceFace === 'py' || entranceFace === 'ny') {
+    for (let x = -radius; x <= radius; x += 1) {
+      for (let z = -radius; z <= radius; z += 1) {
+        coords.push({ x: center.x + x, y: center.y, z: center.z + z });
+      }
+    }
+    return coords;
+  }
+  for (let x = -radius; x <= radius; x += 1) {
+    for (let y = -radius; y <= radius; y += 1) {
+      coords.push({ x: center.x + x, y: center.y + y, z: center.z });
+    }
+  }
+  return coords;
 }
 
 function clampObstacleToBounds(obstacle: Obstacle): void {
