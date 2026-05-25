@@ -28,6 +28,7 @@ import { angleBetweenVectors } from '../simulation/flightMath';
 import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
+import type { ShipPredictor } from '../simulation/shipPredictor';
 import { fogChunkRenderRadius, fogVisibilityDistance } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
@@ -199,6 +200,7 @@ export class RenderApp {
   updateFrame(frame: {
     paused: boolean;
     player: PlayerState;
+    predictor: ShipPredictor;
     chunks: Iterable<ChunkData>;
     fps: number;
     seed: number;
@@ -230,7 +232,7 @@ export class RenderApp {
     );
     this.playerRadius.position.copy(frame.player.position);
     this.playerRadius.visible = this.debugEnabled;
-    this.updateDebugVectors(frame.player, frame.chunks);
+    this.updateDebugVectors(frame.player, frame.predictor, frame.chunks);
 
     const spawnQueueStart = performance.now();
     this.processChunkSpawnQueue(frame.player, frame.spawnBudget);
@@ -589,7 +591,7 @@ export class RenderApp {
     return [...worldAnchors, ...external];
   }
 
-  private updateDebugVectors(player: PlayerState, chunks: Iterable<ChunkData>): void {
+  private updateDebugVectors(player: PlayerState, predictor: ShipPredictor, chunks: Iterable<ChunkData>): void {
     this.debugVelocityRay.visible = this.debugEnabled;
     this.debugCameraRay.visible = this.debugEnabled;
     this.debugMineSegs.visible = this.debugEnabled;
@@ -598,8 +600,8 @@ export class RenderApp {
       return;
     }
 
-    // Cyan: ship position → predicted position in 1 second (velocity × 1s).
-    const predicted = player.position.clone().addScaledVector(player.velocity, 1.0);
+    // Cyan: ship position → physics-predicted position in 1 second (accounts for drag + thrust).
+    const predicted = predictor.predict(1.0);
     this.debugRenderer.updateDebugRay(this.debugVelocityRay, player.position, predicted);
 
     // Yellow: camera position → smoothed look-at target.

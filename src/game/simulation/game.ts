@@ -9,6 +9,7 @@ import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
 import { applyRuntimeTuning } from './runtimeTuning';
 import { applyKeyboardSteering } from './steering';
+import { ShipPredictor } from './shipPredictor';
 import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
@@ -148,10 +149,12 @@ export class Game {
     }
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
+    const predictor = ShipPredictor.forPlayer(this.player);
     const renderStart = performance.now();
     this.render.updateFrame({
       paused: this.paused,
       player: this.player,
+      predictor,
       chunks: this.chunkManager.activeChunks.values(),
       fps: this.fps,
       seed: this.seed,

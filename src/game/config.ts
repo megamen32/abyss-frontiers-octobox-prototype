@@ -161,13 +161,13 @@ export const GAME_CONFIG = {
     // Depth (units) of the portal tunnel geometry rendered on each face.
     portalThickness: 2,
     // Number of axis-aligned divisions used when splitting dense octobox cells. 3 = 27 children.
-    denseSplitDivisions: 3,
+    denseSplitDivisions: 2,
     // Number of axis-aligned divisions used when splitting sparse / low-density octobox cells.
     // 2 = 8 children (classic octree split).
     sparseSplitDivisions: 2,
     // Maximum recursion depth of the octobox tree. Cells at this depth become leaves regardless of
     // size or density.
-    octoboxMaxDepth: 4,
+    octoboxMaxDepth: 5,
     // Probability [0–1] that a cell is recursively split at each depth level (checked after
     // density and size constraints are satisfied).
     octoboxSplitProbability: 0.82,
