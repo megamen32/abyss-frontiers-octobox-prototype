@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { ChunkCoord, ChunkData, ChunkSyncResult } from '../types';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
+import { chunkGenerationRadius } from '../utils/visibility';
 import { ChunkGenerator } from '../content/chunkGenerator';
 import { hydrateChunk } from '../content/chunkPayload';
 
@@ -31,13 +32,13 @@ export class ChunkManager {
     });
   }
 
-  syncAround(position: Vector3, forward: Vector3): ChunkSyncResult {
+  syncAround(position: Vector3, forward: Vector3, speed: number): ChunkSyncResult {
     const currentCoord = worldToChunkCoord(position);
-    const radius = GAME_CONFIG.world.activeRadius;
+    const radius = chunkGenerationRadius();
     const wanted = new Set<string>();
     const added: ChunkData[] = [];
 
-    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward)) {
+    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed)) {
       const key = chunkKey(coord);
       wanted.add(key);
       if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
@@ -99,8 +100,16 @@ export class ChunkManager {
   };
 }
 
-export function prioritizedChunkCoords(currentCoord: ChunkCoord, radius: number, forward: Vector3): ChunkCoord[] {
+export function prioritizedChunkCoords(
+  currentCoord: ChunkCoord,
+  radius: number,
+  forward: Vector3,
+  speed = 0,
+): ChunkCoord[] {
   const normalizedForward = forward.lengthSq() > 0.0001 ? forward.clone().normalize() : new Vector3(0, 0, 1);
+  const predictedChunkOffset = normalizedForward
+    .clone()
+    .multiplyScalar((speed * GAME_CONFIG.world.generationLookaheadSeconds) / GAME_CONFIG.world.chunkSize);
   const queue: Array<{ coord: ChunkCoord; score: number }> = [];
 
   for (let x = -radius; x <= radius; x += 1) {
@@ -114,11 +123,12 @@ export function prioritizedChunkCoords(currentCoord: ChunkCoord, radius: number,
         }
         const direction = offset.normalize();
         const forwardness = direction.dot(normalizedForward);
-        const distancePenalty = offset.length() * 0.35;
+        const predictedDistance = offset.distanceTo(predictedChunkOffset);
+        const distancePenalty = offset.length() * 0.28;
         const verticalPenalty = Math.abs(direction.y) * 0.15;
         queue.push({
           coord,
-          score: forwardness * 3 - distancePenalty - verticalPenalty,
+          score: forwardness * 3.2 - distancePenalty - verticalPenalty - predictedDistance * 0.6,
         });
       }
     }

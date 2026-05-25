@@ -5,6 +5,7 @@ export type ObstacleType = 'sphere' | 'box';
 export type ObstacleMotion = 'static' | 'slow_rotate' | 'linear_drift';
 export type CellKind = 'free' | 'obstacle' | 'empty';
 export type GenerationMode = 'scatter' | 'cave';
+export type MineState = 'idle' | 'targeting' | 'launched' | 'dead';
 
 export interface ChunkCoord {
   x: number;
@@ -61,6 +62,22 @@ export interface Loot {
   cellId: string;
 }
 
+export interface Mine {
+  id: string;
+  originChunkKey: string;
+  anchorCellId: string;
+  position: Vector3;
+  velocity: Vector3;
+  radius: number;
+  triggerRadius: number;
+  speed: number;
+  damage: number;
+  state: MineState;
+  armed: boolean;
+  targetPosition: Vector3 | null;
+  telegraphTimer: number;
+}
+
 export interface ChunkData {
   key: string;
   coord: ChunkCoord;
@@ -71,6 +88,7 @@ export interface ChunkData {
   adjacency: [string, string][];
   obstacles: Obstacle[];
   loot: Loot[];
+  mines: Mine[];
 }
 
 export interface ChunkSyncResult {
@@ -84,8 +102,12 @@ export interface InputState {
   right: number;
   vertical: number;
   boost: boolean;
+  accelerationAdjust: number;
+  dragAdjust: number;
+  turnAdjust: number;
   restartPressed: boolean;
   debugTogglePressed: boolean;
+  fogTogglePressed: boolean;
 }
 
 export interface CameraState {
@@ -96,9 +118,13 @@ export interface CameraState {
 
 export interface PlayerState {
   position: Vector3;
+  previousPosition: Vector3;
   velocity: Vector3;
-  lookDirection: Vector3;
+  forward: Vector3;
+  thrustForward: Vector3;
+  targetThrustForward: Vector3;
   speed: number;
+  stallAmount: number;
   radius: number;
   hp: number;
   loot: number;

@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import type { ChunkData, ChunkCoord, LeafCell, Loot, Obstacle, Portal } from '../types';
+import type { ChunkData, ChunkCoord, LeafCell, Loot, Mine, Obstacle, Portal } from '../types';
 
 export interface SerializedChunkData {
   key: string;
@@ -46,6 +46,21 @@ export interface SerializedChunkData {
     value: number;
     collected: boolean;
     cellId: string;
+  }>;
+  mines: Array<{
+    id: string;
+    originChunkKey: string;
+    anchorCellId: string;
+    position: [number, number, number];
+    velocity: [number, number, number];
+    radius: number;
+    triggerRadius: number;
+    speed: number;
+    damage: number;
+    state: Mine['state'];
+    armed: boolean;
+    targetPosition: [number, number, number] | null;
+    telegraphTimer: number;
   }>;
 }
 
@@ -96,6 +111,21 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
       collected: item.collected,
       cellId: item.cellId,
     })),
+    mines: chunk.mines.map((mine) => ({
+      id: mine.id,
+      originChunkKey: mine.originChunkKey,
+      anchorCellId: mine.anchorCellId,
+      position: vecToTuple(mine.position),
+      velocity: vecToTuple(mine.velocity),
+      radius: mine.radius,
+      triggerRadius: mine.triggerRadius,
+      speed: mine.speed,
+      damage: mine.damage,
+      state: mine.state,
+      armed: mine.armed,
+      targetPosition: mine.targetPosition ? vecToTuple(mine.targetPosition) : null,
+      telegraphTimer: mine.telegraphTimer,
+    })),
   };
 }
 
@@ -145,6 +175,21 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
       value: item.value,
       collected: item.collected,
       cellId: item.cellId,
+    })),
+    mines: data.mines.map((mine) => ({
+      id: mine.id,
+      originChunkKey: mine.originChunkKey,
+      anchorCellId: mine.anchorCellId,
+      position: tupleToVec(mine.position),
+      velocity: tupleToVec(mine.velocity),
+      radius: mine.radius,
+      triggerRadius: mine.triggerRadius,
+      speed: mine.speed,
+      damage: mine.damage,
+      state: mine.state,
+      armed: mine.armed,
+      targetPosition: mine.targetPosition ? tupleToVec(mine.targetPosition) : null,
+      telegraphTimer: mine.telegraphTimer,
     })),
   };
 }

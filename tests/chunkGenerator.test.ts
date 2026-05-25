@@ -1,8 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { Vector3 } from 'three';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { ChunkGenerator } from '../src/game/content/chunkGenerator';
 import { GAME_CONFIG } from '../src/game/config';
 import { prioritizedChunkCoords } from '../src/game/simulation/chunkManager';
-import { createInitialPlayerState, updatePlayer } from '../src/game/simulation/player';
+import { resolvePlayerObstacleCollision, sweptSphereHitsObstacle } from '../src/game/simulation/collisions';
+import { updateMinesInChunk } from '../src/game/simulation/mines';
+import { createInitialPlayerState, travelDirection, updatePlayer } from '../src/game/simulation/player';
+import { applyRuntimeTuning, getRuntimeFlightTuning, resetRuntimeFlightTuning } from '../src/game/simulation/runtimeTuning';
+import { SpawnBudgetController } from '../src/game/simulation/spawnBudget';
+import type { InputState, Obstacle } from '../src/game/types';
+import { applyKeyboardSteering } from '../src/game/simulation/steering';
+import { bandForDangerLevel, worldDangerLevel } from '../src/game/utils/depth';
+import { chunkGenerationRadius, fogChunkRenderRadius, fogVisibilityDistance } from '../src/game/utils/visibility';
+
+function testInput(overrides: Partial<InputState> = {}): InputState {
+  return {
+    forward: 0,
+    right: 0,
+    vertical: 0,
+    boost: false,
+    accelerationAdjust: 0,
+    dragAdjust: 0,
+    turnAdjust: 0,
+    restartPressed: false,
+    debugTogglePressed: false,
+    fogTogglePressed: false,
+    ...overrides,
+  };
+}
 
 function serializeChunk(seed: number, coord: { x: number; y: number; z: number }): string {
   const generator = new ChunkGenerator(seed);
@@ -33,6 +58,10 @@ function serializeChunk(seed: number, coord: { x: number; y: number; z: number }
 }
 
 describe('ChunkGenerator', () => {
+  beforeEach(() => {
+    resetRuntimeFlightTuning();
+  });
+
   it('is deterministic for the same seed and chunk coordinate', () => {
     const first = serializeChunk(133742, { x: 0, y: 0, z: 0 });
     const second = serializeChunk(133742, { x: 0, y: 0, z: 0 });
@@ -114,33 +143,205 @@ describe('ChunkGenerator', () => {
     expect(largeCenterCells.length).toBeGreaterThan(0);
   });
 
-  it('keeps the ship moving and steers slower under boost', () => {
+  it('raises world danger and obstacle density with depth', () => {
+    const generator = new ChunkGenerator(133742);
+    const shallow = generator.generate({ x: 0, y: 0, z: 0 });
+    const deep = generator.generate({ x: 0, y: -4, z: 0 });
+
+    expect(worldDangerLevel(GAME_CONFIG.world.spawn.y)).toBe(0);
+    expect(worldDangerLevel(deep.bounds.max.y)).toBeGreaterThan(worldDangerLevel(shallow.bounds.max.y));
+    expect(bandForDangerLevel(worldDangerLevel(deep.bounds.max.y)).label).toBe('PRESSURE TRENCH');
+    expect(deep.obstacles.length).toBeGreaterThan(shallow.obstacles.length);
+  });
+
+  it('accelerates gradually and gains more speed at depth', () => {
     const player = createInitialPlayerState();
-    const camera = { yaw: 0, pitch: 0, lastManualLookAt: 0 };
+    const initialSpeed = player.velocity.length();
 
-    updatePlayer(
+    updatePlayer(player, 0.1);
+    expect(player.velocity.length()).toBeGreaterThan(initialSpeed);
+    expect(player.velocity.length()).toBeLessThan(GAME_CONFIG.ship.maxSpeed);
+
+    const shallowSpeed = player.velocity.length();
+    player.position.y = GAME_CONFIG.world.spawn.y - GAME_CONFIG.world.depthDifficultyRamp;
+    updatePlayer(player, 0.2);
+    expect(player.velocity.length()).toBeGreaterThan(shallowSpeed);
+  });
+
+  it('lets thrust turn gradually instead of snapping instantly', () => {
+    const player = createInitialPlayerState();
+
+    applyKeyboardSteering(
       player,
-      { forward: 0, right: 0, vertical: 0, boost: false, restartPressed: false, debugTogglePressed: false },
-      camera,
+      testInput({ right: -1 }),
       0.2,
     );
-    const cruiseSpeed = player.velocity.length();
+    const targetAfterInput = player.targetThrustForward.clone();
+    const thrustBeforeUpdate = player.thrustForward.clone();
 
-    updatePlayer(
+    updatePlayer(player, 0.1);
+    expect(player.thrustForward.x).toBeLessThan(0);
+    expect(player.thrustForward.angleTo(targetAfterInput)).toBeGreaterThan(0.001);
+    expect(player.thrustForward.angleTo(targetAfterInput)).toBeLessThan(thrustBeforeUpdate.angleTo(targetAfterInput));
+  });
+
+  it('maps A D to yaw and W S to pitch', () => {
+    const player = createInitialPlayerState();
+
+    applyKeyboardSteering(
       player,
-      { forward: 0, right: 1, vertical: 0, boost: true, restartPressed: false, debugTogglePressed: false },
-      camera,
+      testInput({ right: -1 }),
       0.2,
     );
-    expect(cruiseSpeed).toBeGreaterThan(5);
-    expect(player.velocity.length()).toBeGreaterThan(cruiseSpeed);
-    expect(player.lookDirection.x).toBeGreaterThan(0);
+    expect(player.targetThrustForward.x).toBeLessThan(0);
+
+    applyKeyboardSteering(
+      player,
+      testInput({ forward: 1 }),
+      0.2,
+    );
+    expect(player.targetThrustForward.y).toBeGreaterThan(0);
+
+    applyKeyboardSteering(
+      player,
+      testInput({ forward: -1, right: 1 }),
+      0.2,
+    );
+    expect(player.targetThrustForward.x).toBeGreaterThan(-0.2);
+    expect(player.targetThrustForward.y).toBeLessThan(0.2);
+  });
+
+  it('adjusts acceleration, drag, and turn speed at runtime', () => {
+    applyRuntimeTuning(testInput({ accelerationAdjust: 2, dragAdjust: 1, turnAdjust: -2 }));
+    const tuning = getRuntimeFlightTuning();
+    expect(tuning.baseAcceleration).toBeCloseTo(GAME_CONFIG.ship.baseAcceleration + 1);
+    expect(tuning.baseDrag).toBeCloseTo(GAME_CONFIG.ship.baseDrag + 0.02);
+    expect(tuning.turnInputSpeed).toBeCloseTo(GAME_CONFIG.camera.keyboardYawSpeed - 0.2);
+  });
+
+  it('makes the visual hull lag behind velocity at high speed', () => {
+    const player = createInitialPlayerState();
+    player.velocity.set(0, 0, GAME_CONFIG.ship.maxSpeed * 0.9);
+    player.speed = player.velocity.length();
+    player.forward.set(0, 0, 1);
+    player.thrustForward.set(1, 0, 0).normalize();
+    player.targetThrustForward.copy(player.thrustForward);
+
+    updatePlayer(player, 0.1);
+    expect(player.velocity.x).toBeGreaterThan(0);
+    expect(player.forward.x).toBeGreaterThan(0);
+    expect(player.forward.angleTo(player.velocity.clone().normalize())).toBeGreaterThan(0.01);
+  });
+
+  it('sharp turns at high speed trigger stall and reduce speed', () => {
+    const player = createInitialPlayerState();
+    player.velocity.set(0, 0, GAME_CONFIG.ship.maxSpeed * 0.95);
+    player.speed = player.velocity.length();
+    player.forward.set(0, 0, 1);
+    player.thrustForward.set(1, 0, 0).normalize();
+    player.targetThrustForward.copy(player.thrustForward);
+    const speedBefore = player.velocity.length();
+
+    updatePlayer(player, 0.25);
+    expect(player.stallAmount).toBeGreaterThan(0.7);
+    expect(player.velocity.length()).toBeLessThan(speedBefore);
   });
 
   it('prioritizes chunk generation in front of the ship', () => {
     const player = createInitialPlayerState();
-    const ordered = prioritizedChunkCoords({ x: 0, y: 0, z: 0 }, 1, player.lookDirection);
+    const ordered = prioritizedChunkCoords({ x: 0, y: 0, z: 0 }, 1, travelDirection(player));
     expect(ordered[0]).toEqual({ x: 0, y: 0, z: 0 });
     expect(ordered[1]).toEqual({ x: 0, y: 0, z: 1 });
+  });
+
+  it('keeps fog visibility and preload radius aligned', () => {
+    expect(fogVisibilityDistance()).toBeGreaterThan(GAME_CONFIG.world.chunkSize);
+    expect(fogChunkRenderRadius()).toBeGreaterThanOrEqual(1);
+    expect(chunkGenerationRadius()).toBe(fogChunkRenderRadius() + GAME_CONFIG.world.preloadRadiusPadding);
+  });
+
+  it('reduces spawn budget by one after a low-fps minute but never below one', () => {
+    const budget = new SpawnBudgetController();
+
+    for (let index = 0; index < 10; index += 1) {
+      budget.recordFrame(6, 15);
+    }
+    expect(budget.getBudget()).toBe(GAME_CONFIG.world.spawnBudgetInitial - 1);
+
+    const extraMinutes = GAME_CONFIG.world.spawnBudgetInitial - GAME_CONFIG.world.spawnBudgetMin - 1;
+    for (let index = 0; index < extraMinutes * 10; index += 1) {
+      budget.recordFrame(6, 10);
+    }
+    expect(budget.getBudget()).toBe(GAME_CONFIG.world.spawnBudgetMin);
+  });
+
+  it('generates deterministic mines for simulation chunks', () => {
+    const generator = new ChunkGenerator(133742);
+    const first = generator.generate({ x: 0, y: 0, z: 0 });
+    const second = generator.generate({ x: 0, y: 0, z: 0 });
+    expect(first.mines.map((mine) => mine.id)).toEqual(second.mines.map((mine) => mine.id));
+    expect(first.mines.every((mine) => mine.state === 'idle')).toBe(true);
+  });
+
+  it('telegraphs mine launch before firing', () => {
+    const generator = new ChunkGenerator(133742);
+    let chunk = generator.generate({ x: 0, y: 0, z: 0 });
+
+    if (chunk.mines.length === 0) {
+      for (let x = -1; x <= 1 && chunk.mines.length === 0; x += 1) {
+        for (let y = -1; y <= 1 && chunk.mines.length === 0; y += 1) {
+          for (let z = -1; z <= 1 && chunk.mines.length === 0; z += 1) {
+            chunk = generator.generate({ x, y, z });
+          }
+        }
+      }
+    }
+
+    expect(chunk.mines.length).toBeGreaterThan(0);
+
+    const mine = chunk.mines[0];
+    const player = createInitialPlayerState();
+    player.position.copy(mine.position).add(new Vector3(0, 0, mine.triggerRadius * 0.5));
+    player.velocity.set(0, 0, 6);
+
+    updateMinesInChunk(chunk, player, 0.1);
+    expect(mine.state).toBe('targeting');
+    expect(mine.telegraphTimer).toBeCloseTo(GAME_CONFIG.mines.telegraphDuration);
+    expect(mine.targetPosition).not.toBeNull();
+    expect(mine.velocity.length()).toBe(0);
+
+    updateMinesInChunk(chunk, player, GAME_CONFIG.mines.telegraphDuration);
+    expect(mine.state).toBe('launched');
+    expect(mine.targetPosition).toBeNull();
+    expect(mine.velocity.length()).toBeCloseTo(mine.speed, 4);
+  });
+
+  it('detects and resolves fast ship collision against a box around distance 45', () => {
+    const obstacle: Obstacle = {
+      id: 'wall',
+      type: 'box',
+      motion: 'static',
+      bounds: { min: new Vector3(-5, -5, 40), max: new Vector3(5, 5, 50) },
+      position: new Vector3(0, 0, 45),
+      basePosition: new Vector3(0, 0, 45),
+      size: new Vector3(10, 10, 10),
+      damage: 1,
+      cellId: 'cell',
+      axis: new Vector3(0, 1, 0),
+      angularSpeed: 0,
+      driftAmplitude: 0,
+      phase: 0,
+    };
+
+    const player = createInitialPlayerState();
+    player.previousPosition.set(0, 0, 30);
+    player.position.set(0, 0, 52);
+    player.velocity.set(0, 0, 22);
+
+    expect(sweptSphereHitsObstacle(player.previousPosition, player.position, player.radius, obstacle)).toBe(true);
+
+    resolvePlayerObstacleCollision(player, obstacle);
+    expect(player.position.z).toBeLessThan(40);
+    expect(player.velocity.length()).toBeLessThan(22);
   });
 });

@@ -1,0 +1,21 @@
+import { Vector3 } from 'three';
+import type { InputState, PlayerState } from '../types';
+import { getRuntimeFlightTuning } from './runtimeTuning';
+
+const UP = new Vector3(0, 1, 0);
+const FALLBACK_RIGHT = new Vector3(1, 0, 0);
+
+export function applyKeyboardSteering(player: PlayerState, input: InputState, dt: number): void {
+  const tuning = getRuntimeFlightTuning();
+  const yawDelta = input.right * tuning.turnInputSpeed * dt;
+  const pitchDelta = input.forward * tuning.turnInputSpeed * dt * 0.8;
+
+  if (Math.abs(yawDelta) <= 0.0001 && Math.abs(pitchDelta) <= 0.0001) {
+    return;
+  }
+
+  player.targetThrustForward.applyAxisAngle(UP, yawDelta);
+  const right = new Vector3().crossVectors(UP, player.targetThrustForward).normalize();
+  const pitchAxis = right.lengthSq() > 0.0001 ? right : FALLBACK_RIGHT;
+  player.targetThrustForward.applyAxisAngle(pitchAxis, -pitchDelta).normalize();
+}

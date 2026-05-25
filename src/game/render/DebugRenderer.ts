@@ -19,6 +19,9 @@ const COLORS = {
   portal: new Color('#4d9eff'),
   graph: new Color('#f1de76'),
   player: new Color('#f7f7f7'),
+  visibleRadius: new Color('#4d9eff'),
+  interactiveRadius: new Color('#ffbf69'),
+  simulationRadius: new Color('#ff6ad5'),
 };
 
 export class DebugRenderer {
@@ -77,5 +80,13 @@ export class DebugRenderer {
       points.push(new Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
     }
     return new Line(new BufferGeometry().setFromPoints(points), new LineBasicMaterial({ color: COLORS.player }));
+  }
+
+  createChunkRadiusHelper(color: keyof typeof COLORS): Box3Helper {
+    const helper = new Box3Helper(new Box3(new Vector3(), new Vector3()), COLORS[color]);
+    const material = helper.material as Material & { transparent: boolean; opacity: number };
+    material.transparent = true;
+    material.opacity = 0.42;
+    return helper;
   }
 }

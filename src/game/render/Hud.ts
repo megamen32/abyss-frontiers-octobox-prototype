@@ -1,4 +1,5 @@
 import type { ChunkCoord } from '../types';
+import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 
 interface HudSnapshot {
   hp: number;
@@ -8,7 +9,17 @@ interface HudSnapshot {
   coord: ChunkCoord;
   distance: number;
   depth: number;
+  speed: number;
+  stallAmount: number;
+  driftAngleDeg: number;
+  dangerLevel: number;
+  depthBand: string;
+  dangerAccent: string;
+  tuning: RuntimeFlightTuning;
   debugEnabled: boolean;
+  fogEnabled: boolean;
+  spawnBudget: number;
+  averageFps: number;
   dead: boolean;
 }
 
@@ -22,7 +33,14 @@ export class Hud {
     coord: document.createElement('span'),
     distance: document.createElement('span'),
     depth: document.createElement('span'),
+    speed: document.createElement('span'),
+    drift: document.createElement('span'),
   };
+  private readonly depthBand = document.createElement('span');
+  private readonly dangerValue = document.createElement('span');
+  private readonly stallValue = document.createElement('span');
+  private readonly tuningReadout = document.createElement('div');
+  private readonly depthGaugeFill = document.createElement('div');
   private readonly debugButton = document.createElement('button');
   private readonly restartButton = document.createElement('button');
   private readonly deathOverlay = document.createElement('div');
@@ -39,6 +57,23 @@ export class Hud {
     const panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML = '<h1>Abyss Frontiers</h1>';
+    const depthOverview = document.createElement('div');
+    depthOverview.className = 'depth-overview';
+    depthOverview.innerHTML = `
+      <div class="depth-readout">
+        <span class="depth-kicker">Depth Band</span>
+      </div>
+      <div class="danger-readout">
+        <span class="depth-kicker">Hazard</span>
+      </div>
+      <div class="depth-gauge">
+        <div class="depth-gauge-track"></div>
+      </div>
+    `;
+    depthOverview.querySelector('.depth-readout')?.append(this.depthBand, this.stats.depth);
+    depthOverview.querySelector('.danger-readout')?.append(this.dangerValue, this.stallValue);
+    this.depthGaugeFill.className = 'depth-gauge-fill';
+    depthOverview.querySelector('.depth-gauge')?.append(this.depthGaugeFill);
     const stats = document.createElement('div');
     stats.className = 'stats';
     stats.append(
@@ -46,11 +81,12 @@ export class Hud {
       this.stat('Loot', this.stats.loot),
       this.stat('FPS', this.stats.fps),
       this.stat('Seed', this.stats.seed),
+      this.stat('Speed', this.stats.speed),
+      this.stat('Drift', this.stats.drift),
       this.stat('Chunk', this.stats.coord),
       this.stat('Distance', this.stats.distance),
-      this.stat('Depth', this.stats.depth),
     );
-    panel.append(stats);
+    panel.append(depthOverview, stats);
 
     const controls = document.createElement('div');
     controls.className = 'controls';
@@ -60,8 +96,9 @@ export class Hud {
     this.debugButton.addEventListener('click', () => this.onToggleDebug?.());
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = 'Click to steer. Ship keeps cruising, Shift boosts, F1 toggles debug.';
-    controls.append(this.restartButton, this.debugButton, hint);
+    hint.textContent = 'A/D yaw the thrust, W/S pitch it, inertia keeps the hull drifting, hard deflections can stall the flow. F toggles fog, Z toggles debug.';
+    this.tuningReadout.className = 'tuning-readout';
+    controls.append(this.restartButton, this.debugButton, hint, this.tuningReadout);
 
     top.append(panel, controls);
 
@@ -100,8 +137,21 @@ export class Hud {
     this.stats.seed.textContent = `${snapshot.seed}`;
     this.stats.coord.textContent = `${snapshot.coord.x}, ${snapshot.coord.y}, ${snapshot.coord.z}`;
     this.stats.distance.textContent = `${snapshot.distance.toFixed(1)}`;
-    this.stats.depth.textContent = `${snapshot.depth.toFixed(1)}`;
+    this.stats.depth.textContent = `${Math.max(0, snapshot.depth).toFixed(0)} m`;
+    this.stats.speed.textContent = `${snapshot.speed.toFixed(1)}`;
+    this.stats.drift.textContent = `${snapshot.driftAngleDeg.toFixed(0)}°`;
+    this.depthBand.textContent = snapshot.depthBand;
+    this.dangerValue.textContent = `${Math.round(snapshot.dangerLevel * 100)}%`;
+    this.stallValue.textContent = snapshot.stallAmount >= 0.7 ? 'STALL' : snapshot.stallAmount >= 0.35 ? 'SLIP' : 'FLOW';
+    this.stallValue.className = snapshot.stallAmount >= 0.7 ? 'stall-warning hot' : snapshot.stallAmount >= 0.35 ? 'stall-warning warm' : 'stall-warning calm';
+    this.depthGaugeFill.style.setProperty('--depth-fill', `${(snapshot.dangerLevel * 100).toFixed(1)}%`);
+    this.depthGaugeFill.style.setProperty('--depth-accent', snapshot.dangerAccent);
     this.debugButton.textContent = snapshot.debugEnabled ? 'Hide Debug' : 'Show Debug';
+    this.tuningReadout.textContent =
+      `Accel +/- ${snapshot.tuning.baseAcceleration.toFixed(1)}  Drag [] ${snapshot.tuning.baseDrag.toFixed(2)}`
+      + `  Turn ;' ${snapshot.tuning.turnInputSpeed.toFixed(2)}  Spawn/frame ${snapshot.spawnBudget}`
+      + `  Avg FPS ${snapshot.averageFps.toFixed(1)}  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`;
+    this.tuningReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
 
     const deathStats = this.deathOverlay.querySelector('.death-stats');
     if (deathStats) {

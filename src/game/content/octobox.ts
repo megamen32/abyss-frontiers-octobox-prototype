@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { AABB, LeafCell } from '../types';
 import { SeededRandom } from '../utils/rng';
+import { worldDangerLevel } from '../utils/depth';
 
 export function generateOctoBoxLeaves(bounds: AABB, seed: number): LeafCell[] {
   const rng = new SeededRandom(seed);
@@ -112,18 +113,21 @@ function estimateDensity(bounds: AABB, caveBias: number): number {
     return 0.65;
   }
 
+  const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
+  const depthDanger = worldDangerLevel(center.y);
   const size = bounds.max.clone().sub(bounds.min);
   const minSize = Math.min(size.x, size.y, size.z);
   const maxLeafSize = getMaxLeafSize();
   const sizePressure = Math.min(1, minSize / maxLeafSize);
+  const depthPressure = depthDanger * GAME_CONFIG.world.depthCellDensityBonus;
 
   if (caveBias >= GAME_CONFIG.world.caveCoreBias) {
-    return 0.04 * sizePressure;
+    return Math.min(0.22, 0.04 * sizePressure + depthPressure * 0.12);
   }
   if (caveBias <= GAME_CONFIG.world.caveWallBias) {
-    return 0.85 + sizePressure * 0.15;
+    return Math.min(1, 0.85 + sizePressure * 0.15 + depthPressure * 0.1);
   }
 
   const transition = (GAME_CONFIG.world.caveCoreBias - caveBias) / (GAME_CONFIG.world.caveCoreBias - GAME_CONFIG.world.caveWallBias);
-  return Math.min(1, 0.28 + transition * 0.48 + sizePressure * 0.18);
+  return Math.min(1, 0.28 + transition * 0.48 + sizePressure * 0.18 + depthPressure);
 }

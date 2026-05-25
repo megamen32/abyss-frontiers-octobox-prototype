@@ -1,43 +1,55 @@
 import {
+  BufferGeometry,
   BoxGeometry,
   Color,
+  Group,
+  Line,
+  LineBasicMaterial,
   Mesh,
   MeshStandardMaterial,
   OctahedronGeometry,
   SphereGeometry,
   type Object3D,
+  Vector3,
 } from 'three';
 
-type MeshFactory = () => Mesh;
+type ObjectFactory<T extends Object3D> = () => T;
 
-class MeshPool {
-  private readonly available: Mesh[] = [];
+class ObjectPool<T extends Object3D> {
+  private readonly available: T[] = [];
 
-  constructor(private readonly factory: MeshFactory) {}
-
-  acquire(): Mesh {
-    const mesh = this.available.pop() ?? this.factory();
-    mesh.visible = true;
-    return mesh;
+  constructor(private readonly factory: ObjectFactory<T>, initialSize = 0) {
+    for (let index = 0; index < initialSize; index += 1) {
+      const object = this.factory();
+      object.visible = false;
+      this.available.push(object);
+    }
   }
 
-  release(mesh: Mesh): void {
-    mesh.visible = false;
-    mesh.parent?.remove(mesh);
-    this.available.push(mesh);
+  acquire(): T {
+    const object = this.available.pop() ?? this.factory();
+    object.visible = true;
+    return object;
+  }
+
+  release(object: T): void {
+    object.visible = false;
+    object.parent?.remove(object);
+    this.available.push(object);
   }
 }
 
 export class RenderPools {
-  readonly sphereObstacle = new MeshPool(
+  readonly sphereObstacle = new ObjectPool<Mesh>(
     () =>
       new Mesh(
         new SphereGeometry(1, 18, 18),
         new MeshStandardMaterial({ color: new Color('#a4563f'), roughness: 0.7, metalness: 0.12 }),
       ),
+    24,
   );
 
-  readonly boxObstacle = new MeshPool(
+  readonly boxObstacle = new ObjectPool<Mesh>(
     () =>
       new Mesh(
         new BoxGeometry(1, 1, 1),
@@ -48,22 +60,45 @@ export class RenderPools {
           metalness: 0.08,
         }),
       ),
+    180,
   );
 
-  readonly coin = new MeshPool(
+  readonly coin = new ObjectPool<Mesh>(
     () =>
       new Mesh(
         new OctahedronGeometry(0.9, 0),
         new MeshStandardMaterial({ color: new Color('#f8c95f'), emissive: new Color('#5e4310') }),
       ),
+    40,
   );
 
-  readonly chest = new MeshPool(
+  readonly chest = new ObjectPool<Mesh>(
     () =>
       new Mesh(
         new BoxGeometry(1.8, 1.4, 1.2),
         new MeshStandardMaterial({ color: new Color('#5d8fbc'), roughness: 0.45, metalness: 0.4 }),
       ),
+    12,
+  );
+
+  readonly mine = new ObjectPool<Group>(
+    () => {
+      const group = new Group();
+      const core = new Mesh(
+        new OctahedronGeometry(1, 1),
+        new MeshStandardMaterial({ color: new Color('#ff684f'), emissive: new Color('#622118'), roughness: 0.35, metalness: 0.18 }),
+      );
+      core.name = 'mine-core';
+      const telegraph = new Line(
+        new BufferGeometry().setFromPoints([new Vector3(0, 0, 0), new Vector3(0, 0, 1)]),
+        new LineBasicMaterial({ color: new Color('#ffb38a') }),
+      );
+      telegraph.name = 'mine-telegraph';
+      telegraph.visible = false;
+      group.add(core, telegraph);
+      return group;
+    },
+    12,
   );
 
   releaseObjects(items: Object3D[]): void {

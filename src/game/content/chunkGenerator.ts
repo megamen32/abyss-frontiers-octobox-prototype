@@ -7,6 +7,7 @@ import { generatePortals } from './portals';
 import { buildAdjacency, buildNavigableSet } from './navigation';
 import { placeObstacles } from './obstacles';
 import { placeLoot } from './loot';
+import { placeMines } from './mines';
 
 export class ChunkGenerator {
   constructor(private readonly globalSeed: number) {}
@@ -28,6 +29,7 @@ export class ChunkGenerator {
 
     const obstacles = placeObstacles(cells, portals, rng);
     const loot = placeLoot(cells, portals, rng);
+    const mines = placeMines(cells, portals, rng, chunkKey(coord));
     const adjacency = adjacencyAll.filter(([a, b]) => freeIds.has(a) && freeIds.has(b));
 
     const obstacleCells = new Set(obstacles.map((obstacle) => obstacle.cellId));
@@ -47,6 +49,7 @@ export class ChunkGenerator {
       adjacency,
       obstacles,
       loot,
+      mines,
     };
   }
 }
