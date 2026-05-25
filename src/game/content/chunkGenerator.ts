@@ -22,7 +22,11 @@ export class ChunkGenerator {
 
   generateProfiled(
     coord: ChunkCoord,
-    options: { forceCaveEntranceFace?: Face } = {},
+    options: {
+      forceCaveEntranceFace?: Face;
+      forceCaveClusterCenter?: ChunkCoord;
+      forceCaveMouthRadiusChunks?: number;
+    } = {},
   ): { chunk: ChunkData; timings: ChunkBuildTimings } {
     const totalStart = performance.now();
     const bounds = chunkBounds(coord);
@@ -30,12 +34,19 @@ export class ChunkGenerator {
     const portals = generatePortals(this.globalSeed, coord, bounds);
 
     const caveEntrance = options.forceCaveEntranceFace
-      ? { face: options.forceCaveEntranceFace, seed: faceSeed(this.globalSeed, coord, options.forceCaveEntranceFace) }
+      ? {
+          face: options.forceCaveEntranceFace,
+          seed: faceSeed(
+            this.globalSeed,
+            options.forceCaveClusterCenter ?? coord,
+            options.forceCaveEntranceFace,
+          ),
+        }
       : detectCaveChunk(this.globalSeed, coord);
     if (caveEntrance) {
       const caveStart = performance.now();
       const entranceRadius = options.forceCaveEntranceFace ? GAME_CONFIG.blackHole.entranceRadius : undefined;
-      const caveResult = generateCaveChunkData(coord, bounds, portals, caveEntrance, entranceRadius);
+      const caveResult = generateCaveChunkData(coord, bounds, portals, caveEntrance, entranceRadius, options.forceCaveClusterCenter, options.forceCaveMouthRadiusChunks);
       const caveMs = performance.now() - caveStart;
       const chunk: ChunkData = {
         key: chunkKey(coord),
@@ -43,6 +54,8 @@ export class ChunkGenerator {
         seed,
         isCaveChunk: true,
         caveEntranceCenter: caveResult.entranceCenter ? { x: caveResult.entranceCenter.x, y: caveResult.entranceCenter.y, z: caveResult.entranceCenter.z } : undefined,
+        caveEntranceFace: caveResult.entranceCenter ? caveEntrance.face : undefined,
+        caveEntranceRadius: caveResult.entranceCenter ? (entranceRadius ?? GAME_CONFIG.world.portalRadius) : undefined,
         bounds,
         cells: caveResult.cells,
         portals,

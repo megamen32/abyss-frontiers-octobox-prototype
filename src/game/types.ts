@@ -132,6 +132,8 @@ export interface ChunkData {
   bounds: AABB;
   isCaveChunk?: boolean;
   caveEntranceCenter?: { x: number; y: number; z: number };
+  caveEntranceFace?: Face;
+  caveEntranceRadius?: number;
   cells: LeafCell[];
   portals: Portal[];
   adjacency: [string, string][];

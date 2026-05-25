@@ -7,6 +7,8 @@ export interface SerializedChunkData {
   seed: number;
   isCaveChunk?: boolean;
   caveEntranceCenter?: [number, number, number];
+  caveEntranceFace?: Portal['face'];
+  caveEntranceRadius?: number;
   bounds: { min: [number, number, number]; max: [number, number, number] };
   cells: Array<{
     id: string;
@@ -80,6 +82,8 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
     seed: chunk.seed,
     isCaveChunk: chunk.isCaveChunk,
     caveEntranceCenter: chunk.caveEntranceCenter ? vecToTuple(new Vector3(chunk.caveEntranceCenter.x, chunk.caveEntranceCenter.y, chunk.caveEntranceCenter.z)) : undefined,
+    caveEntranceFace: chunk.caveEntranceFace,
+    caveEntranceRadius: chunk.caveEntranceRadius,
     bounds: dehydrateBounds(chunk.bounds),
     cells: chunk.cells.map((cell) => ({
       id: cell.id,
@@ -154,6 +158,8 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
     seed: data.seed,
     isCaveChunk: data.isCaveChunk,
     caveEntranceCenter: data.caveEntranceCenter ? { x: data.caveEntranceCenter[0], y: data.caveEntranceCenter[1], z: data.caveEntranceCenter[2] } : undefined,
+    caveEntranceFace: data.caveEntranceFace,
+    caveEntranceRadius: data.caveEntranceRadius,
     bounds: hydrateBounds(data.bounds),
     cells: data.cells.map((cell) => ({
       id: cell.id,

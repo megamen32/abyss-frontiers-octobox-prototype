@@ -16,7 +16,7 @@ interface ChunkWorkerResponse {
 interface ChunkSyncOptions {
   caveOnly?: boolean;
   retentionAabb?: AABB;
-  forcedCaves?: Array<{ coord: ChunkCoord; entranceFace: Face }>;
+  forcedCaves?: Array<{ coord: ChunkCoord; entranceFace: Face; clusterCenter: ChunkCoord; mouthRadiusChunks: number }>;
 }
 
 export class ChunkManager {
@@ -52,13 +52,13 @@ export class ChunkManager {
     const wanted = new Set<string>();
     const keepAlive = new Set<string>();
     const added: ChunkData[] = [];
-    const forcedCaves = new Map((options.forcedCaves ?? []).map((entry) => [chunkKey(entry.coord), entry.entranceFace]));
+    const forcedCaves = new Map((options.forcedCaves ?? []).map((entry) => [chunkKey(entry.coord), entry]));
 
     // Build the generation set (inner radius) — request missing chunks from workers.
     for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed)) {
       const key = chunkKey(coord);
-      const forcedEntranceFace = forcedCaves.get(key);
-      if (options.caveOnly && !forcedEntranceFace && !detectCaveChunk(this.seed, coord)) {
+      const forcedEntry = forcedCaves.get(key);
+      if (options.caveOnly && !forcedEntry && !detectCaveChunk(this.seed, coord)) {
         continue;
       }
       wanted.add(key);
@@ -67,7 +67,14 @@ export class ChunkManager {
         this.pendingKeys.add(key);
         const worker = this.workers[this.roundRobinIndex % this.workers.length];
         this.roundRobinIndex += 1;
-        worker.postMessage({ type: 'generate', seed: this.seed, coord, forceCaveEntranceFace: forcedEntranceFace });
+        worker.postMessage({
+          type: 'generate',
+          seed: this.seed,
+          coord,
+          forceCaveEntranceFace: forcedEntry?.entranceFace,
+          forceCaveClusterCenter: forcedEntry?.clusterCenter,
+          forceCaveMouthRadiusChunks: forcedEntry?.mouthRadiusChunks,
+        });
       }
     }
 

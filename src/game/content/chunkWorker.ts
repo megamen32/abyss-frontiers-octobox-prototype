@@ -9,6 +9,8 @@ interface GenerateChunkRequest {
   seed: number;
   coord: ChunkCoord;
   forceCaveEntranceFace?: Face;
+  forceCaveClusterCenter?: ChunkCoord;
+  forceCaveMouthRadiusChunks?: number;
 }
 
 interface GenerateChunkResponse {
@@ -31,6 +33,8 @@ self.onmessage = (event: MessageEvent<GenerateChunkRequest>) => {
   }
   const result = generator.generateProfiled(event.data.coord, {
     forceCaveEntranceFace: event.data.forceCaveEntranceFace,
+    forceCaveClusterCenter: event.data.forceCaveClusterCenter,
+    forceCaveMouthRadiusChunks: event.data.forceCaveMouthRadiusChunks,
   });
   const serializeStart = performance.now();
   const dehydrated = dehydrateChunk(result.chunk);

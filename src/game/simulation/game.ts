@@ -282,7 +282,7 @@ export class Game {
     forward: Vector3;
     caveOnly: boolean;
     retentionAabb?: AABB;
-    forcedCaves: Array<{ coord: ChunkCoord; entranceFace: Face }>;
+    forcedCaves: Array<{ coord: ChunkCoord; entranceFace: Face; clusterCenter: ChunkCoord; mouthRadiusChunks: number }>;
   } {
     const currentCoord = worldToChunkCoord(this.player.position);
     const currentChunk = this.chunkManager.activeChunks.get(chunkKey(currentCoord));
@@ -319,7 +319,7 @@ export class Game {
   private buildForcedCaves(
     predictor: ShipPredictor,
     horizon: number,
-  ): Array<{ coord: ChunkCoord; entranceFace: Face }> {
+  ): Array<{ coord: ChunkCoord; entranceFace: Face; clusterCenter: ChunkCoord; mouthRadiusChunks: number }> {
     const depth = this.spawnPosition.y - this.player.position.y;
     if (depth < GAME_CONFIG.blackHole.minDepth || depth > GAME_CONFIG.blackHole.maxDepth) {
       return [];
@@ -330,11 +330,11 @@ export class Game {
       1,
       Math.ceil(GAME_CONFIG.blackHole.entranceRadius / GAME_CONFIG.world.chunkSize),
     );
-    const coords = new Map<string, { coord: ChunkCoord; entranceFace: Face }>();
+    const coords = new Map<string, { coord: ChunkCoord; entranceFace: Face; clusterCenter: ChunkCoord; mouthRadiusChunks: number }>();
     for (const time of [Math.min(1.5, horizon), Math.min(3, horizon), horizon]) {
       const center = worldToChunkCoord(predictor.predict(time));
       for (const coord of expandCaveFront(center, entranceFace, mouthRadiusChunks)) {
-        coords.set(chunkKey(coord), { coord, entranceFace });
+        coords.set(chunkKey(coord), { coord, entranceFace, clusterCenter: center, mouthRadiusChunks });
       }
     }
     return [...coords.values()];

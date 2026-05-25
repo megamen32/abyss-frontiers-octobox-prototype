@@ -103,7 +103,7 @@ export const GAME_CONFIG = {
     // Points in ship-local space (x=right, y=up, z=forward/nose) that the camera must always keep
     // inside the visible frustum. The camera pulls back until all anchors are on screen.
     shipViewAnchors: [
-      { x: 0, y: 0, z: 2.5 },   // nose
+      { x: 0, y: 0, z: 1.5 },   // nose
       { x: 0, y: 0, z: -1.5 },  // tail
     ],
   },
@@ -118,7 +118,7 @@ export const GAME_CONFIG = {
     simulationRadius: 1,
     // Extra chunk radius added on top of simulationRadius for background pre-generation. Chunks in
     // this band are generated but not yet active, reducing pop-in.
-    preloadRadiusPadding: 1,
+    preloadRadiusPadding: 2,
     // Extra chunk radius beyond generationRadius before a loaded chunk is evicted. Creates a
     // hysteresis buffer so crossing a boundary doesn't immediately remove trailing chunks while
     // leading ones are still being generated.
@@ -311,8 +311,12 @@ export const GAME_CONFIG = {
     maxDepth: 1000,
     // Radius of the black hole entrance sphere (diameter = radius * 2).
     entranceRadius: 128,
-    // Number of ring segments for the sphere mesh.
-    sphereSegments: 32,
+    // Number of taper nodes used to ease from the giant mouth into a normal tunnel.
+    taperNodes: 12,
+    // Multiplier for the bright entrance fog disc relative to entranceRadius.
+    glowRadiusMultiplier: 1.15,
+    // Thickness of the rock rim ring relative to entranceRadius.
+    rimThickness: 0.18,
   },
 
   visuals: {
@@ -323,7 +327,7 @@ export const GAME_CONFIG = {
     // How many chunks of visibility the fog allows. This is the PRIMARY fog parameter — density
     // is computed from it so generation pop-in is always hidden.
     // fogDensity = sqrt(-log(0.03)) / ((fogRenderRadiusChunks - 0.5) * chunkSize)
-    fogRenderRadiusChunks: 3,
+    fogRenderRadiusChunks: 1,
     // Sky and fog color near the surface (dangerLevel = 0).
     skyColor: 0x03111a,
     fogColor: 0x02070c,

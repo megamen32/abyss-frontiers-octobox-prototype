@@ -16,7 +16,7 @@ import type {
   StaticChunkMeshData,
 } from '../types';
 import { GAME_CONFIG } from '../config';
-import { chunkKey } from '../utils/chunk';
+import { chunkBounds, chunkKey } from '../utils/chunk';
 import { depthBelowSurface } from '../utils/depth';
 import { faceSeed } from '../utils/hash';
 import { SeededRandom } from '../utils/rng';
@@ -83,6 +83,8 @@ export function generateCaveChunkData(
   portals: Portal[],
   entrance: CaveEntrance,
   entranceRadiusOverride?: number,
+  clusterCenterCoord?: ChunkCoord,
+  mouthRadiusChunks?: number,
 ): {
   cells: LeafCell[];
   obstacles: Obstacle[];
@@ -97,17 +99,24 @@ export function generateCaveChunkData(
   const entrancePortal = portals.find((p) => p.face === entrance.face);
   if (!entrancePortal) return emptyCaveResult();
 
+  const generationBounds = clusterCenterCoord && mouthRadiusChunks !== undefined
+    ? clusterGenerationBounds(clusterCenterCoord, mouthRadiusChunks)
+    : bounds;
   const startDir = FACE_INWARD[entrance.face];
-  const system = buildCaveSystem(entrance.seed, entrancePortal.center.clone(), startDir, bounds, entranceRadiusOverride);
+  const entranceCenter = clusterCenterCoord
+    ? clusterEntranceCenter(clusterCenterCoord, mouthRadiusChunks ?? 0, entrance.face)
+    : entrancePortal.center.clone();
+  const system = buildCaveSystem(entrance.seed, entranceCenter.clone(), startDir, generationBounds, entranceRadiusOverride);
   const allTunnels = collectTunnels(system.mainTunnel);
   const rng = new SeededRandom(entrance.seed);
 
   const allSamples: CaveSample[] = [];
   const obstacles: Obstacle[] = [];
   for (const tunnel of allTunnels) {
-    const samples = sampleTunnelPath(tunnel.nodes, GAME_CONFIG.cave.sampleStep);
-    allSamples.push(...samples);
-    obstacles.push(...placeGauntlets(tunnel, samples, rng, key));
+    const worldSamples = sampleTunnelPath(tunnel.nodes, GAME_CONFIG.cave.sampleStep);
+    const localSamples = clipSamplesToBounds(worldSamples, bounds);
+    allSamples.push(...localSamples);
+    obstacles.push(...placeGauntlets(tunnel, localSamples, rng, key));
   }
 
   const cells = buildCaveCells(allSamples);
@@ -137,8 +146,71 @@ export function generateCaveChunkData(
     })),
     loot,
     mines,
-    entranceCenter: entrancePortal.center.clone(),
+    entranceCenter: containsWorldPoint(bounds, entranceCenter) ? entranceCenter.clone() : undefined,
   };
+}
+
+function clusterGenerationBounds(centerCoord: ChunkCoord, mouthRadiusChunks: number): AABB {
+  const min = chunkBounds({
+    x: centerCoord.x - mouthRadiusChunks,
+    y: centerCoord.y - mouthRadiusChunks,
+    z: centerCoord.z - mouthRadiusChunks,
+  }).min;
+  const max = chunkBounds({
+    x: centerCoord.x + mouthRadiusChunks,
+    y: centerCoord.y + mouthRadiusChunks,
+    z: centerCoord.z + mouthRadiusChunks,
+  }).max;
+  return { min, max };
+}
+
+function clusterEntranceCenter(centerCoord: ChunkCoord, mouthRadiusChunks: number, face: Face): Vector3 {
+  const bounds = clusterGenerationBounds(centerCoord, mouthRadiusChunks);
+  const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
+  switch (face) {
+    case 'px': return new Vector3(bounds.max.x, center.y, center.z);
+    case 'nx': return new Vector3(bounds.min.x, center.y, center.z);
+    case 'py': return new Vector3(center.x, bounds.max.y, center.z);
+    case 'ny': return new Vector3(center.x, bounds.min.y, center.z);
+    case 'pz': return new Vector3(center.x, center.y, bounds.max.z);
+    case 'nz': return new Vector3(center.x, center.y, bounds.min.z);
+  }
+}
+
+function clipSamplesToBounds(samples: CaveSample[], bounds: AABB): CaveSample[] {
+  const clipped: CaveSample[] = [];
+  for (const sample of samples) {
+    if (!sampleTouchesBounds(sample, bounds)) {
+      continue;
+    }
+    clipped.push({
+      position: sample.position.clone(),
+      tangent: sample.tangent.clone(),
+      normal: sample.normal.clone(),
+      binormal: sample.binormal.clone(),
+      radius: sample.radius,
+    });
+  }
+  return clipped;
+}
+
+function sampleTouchesBounds(sample: CaveSample, bounds: AABB): boolean {
+  return (
+    sample.position.x + sample.radius >= bounds.min.x &&
+    sample.position.x - sample.radius <= bounds.max.x &&
+    sample.position.y + sample.radius >= bounds.min.y &&
+    sample.position.y - sample.radius <= bounds.max.y &&
+    sample.position.z + sample.radius >= bounds.min.z &&
+    sample.position.z - sample.radius <= bounds.max.z
+  );
+}
+
+function containsWorldPoint(bounds: AABB, point: Vector3): boolean {
+  return (
+    point.x >= bounds.min.x && point.x <= bounds.max.x &&
+    point.y >= bounds.min.y && point.y <= bounds.max.y &&
+    point.z >= bounds.min.z && point.z <= bounds.max.z
+  );
 }
 
 function buildCaveSystem(
@@ -163,8 +235,9 @@ function buildTunnel(
   entranceRadiusOverride?: number,
 ): CaveTunnel {
   const cfg = GAME_CONFIG.cave;
-  const nodeCount = entranceRadiusOverride ? 20 : rng.int(cfg.minNodes, cfg.maxNodes);
-  const baseRadius = entranceRadiusOverride ?? Math.max(cfg.minRadius, cfg.baseRadius - depth * cfg.radiusDecayPerDepth);
+  const taperNodes = entranceRadiusOverride ? GAME_CONFIG.blackHole.taperNodes : 0;
+  const nodeCount = entranceRadiusOverride ? taperNodes + rng.int(cfg.minNodes + 2, cfg.maxNodes + 4) : rng.int(cfg.minNodes, cfg.maxNodes);
+  const targetRadius = Math.max(cfg.minRadius, cfg.baseRadius - depth * cfg.radiusDecayPerDepth);
   const entranceRadius = entranceRadiusOverride ?? Math.min(GAME_CONFIG.world.chunkSize * 0.46, GAME_CONFIG.ship.radius * 50);
 
   const nodes: CavePathNode[] = [];
@@ -172,22 +245,33 @@ function buildTunnel(
   let dir = startDir.clone().normalize();
 
   for (let i = 0; i <= nodeCount; i++) {
-    let r = entranceRadiusOverride ? entranceRadiusOverride : Math.max(cfg.minRadius, baseRadius + rng.range(-1.5, 1.5));
-    if (depth === 0 && i === 0) {
+    let r = Math.max(cfg.minRadius, targetRadius + rng.range(-1.5, 1.5));
+    if (entranceRadiusOverride) {
+      const t = taperNodes > 0 ? Math.min(1, i / taperNodes) : 1;
+      const eased = t * t * (3 - 2 * t);
+      r = entranceRadius + (targetRadius - entranceRadius) * eased;
+    } else if (depth === 0 && i === 0) {
       r = Math.max(r, entranceRadius);
     } else if (depth === 0 && i === 1) {
-      r = Math.max(r, entranceRadiusOverride ? entranceRadiusOverride : Math.min(entranceRadius * 0.62, GAME_CONFIG.world.chunkSize * 0.34));
+      r = Math.max(r, Math.min(entranceRadius * 0.62, GAME_CONFIG.world.chunkSize * 0.34));
     } else if (depth === 0 && i === 2) {
-      r = Math.max(r, entranceRadiusOverride ? entranceRadiusOverride : Math.min(entranceRadius * 0.36, GAME_CONFIG.world.chunkSize * 0.22));
+      r = Math.max(r, Math.min(entranceRadius * 0.36, GAME_CONFIG.world.chunkSize * 0.22));
     }
     nodes.push({ position: pos.clone(), radius: r });
 
     if (i < nodeCount) {
       const twist = new Vector3(rng.next() - 0.5, rng.next() - 0.5, rng.next() - 0.5).normalize();
-      const curvature = i < 2 ? cfg.maxCurvature * 0.18 : cfg.maxCurvature;
+      const curvature = entranceRadiusOverride
+        ? (i < taperNodes ? cfg.maxCurvature * 0.08 : cfg.maxCurvature * 0.5)
+        : i < 2
+          ? cfg.maxCurvature * 0.18
+          : cfg.maxCurvature;
       dir.applyAxisAngle(twist, rng.range(0, curvature));
       dir.normalize();
-      pos = pos.clone().add(dir.clone().multiplyScalar(cfg.nodeSpacing));
+      const spacing = entranceRadiusOverride && i < taperNodes
+        ? cfg.nodeSpacing * 1.6
+        : cfg.nodeSpacing;
+      pos = pos.clone().add(dir.clone().multiplyScalar(spacing));
       if (!entranceRadiusOverride) {
         const margin = r + 2;
         pos.x = clampMargin(pos.x, bounds.min.x + margin, bounds.max.x - margin);
@@ -200,7 +284,7 @@ function buildTunnel(
   const gauntletType = rng.pick(GAUNTLET_TYPES);
   const children: CaveTunnel[] = [];
 
-  if (depth < cfg.maxBranchDepth && nodeCount > 2 && rng.next() < cfg.branchProbability) {
+  if (depth < cfg.maxBranchDepth && nodeCount > 2 && !entranceRadiusOverride && rng.next() < cfg.branchProbability) {
     const last = nodes[nodes.length - 1];
     const branchCount = rng.next() < 0.6 ? 2 : 3;
     for (let b = 0; b < branchCount - 1; b++) {
@@ -349,10 +433,12 @@ function placeGauntlets(
   const step = GAME_CONFIG.cave.sampleStep;
   const obstacles: Obstacle[] = [];
   let idx = 0;
+  const mouthClearDistance = GAME_CONFIG.blackHole.entranceRadius * 1.35;
 
   for (let i = 0; i < samples.length; i++) {
     const dist = i * step;
     if (dist < spacing * 0.5) continue;
+    if (samples[i].radius > GAME_CONFIG.cave.baseRadius * 2.2 && dist < mouthClearDistance) continue;
     if (
       i > 0 &&
       Math.floor(dist / spacing) === Math.floor((dist - step) / spacing)

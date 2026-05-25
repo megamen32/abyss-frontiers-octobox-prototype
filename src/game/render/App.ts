@@ -34,6 +34,7 @@ import type { ShipPredictor } from '../simulation/shipPredictor';
 import { fogChunkRenderRadius, fogDensity, fogVisibilityDistance } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
+import { updateShipBank } from './shipBank';
 import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -46,7 +47,7 @@ type ChunkRenderGroup = {
   debug: Group | null;
   pooled: PooledChunkObject[];
   staticMesh: Mesh | null;
-  blackHoleMesh: Mesh | null;
+  blackHoleMesh: Group | null;
   coord: ChunkCoord;
   spawnCursor: number;
 };
@@ -70,6 +71,7 @@ export class RenderApp {
   private readonly debugRenderer = new DebugRenderer();
   private readonly chunkGroups = new Map<string, ChunkRenderGroup>();
   private readonly playerMesh = new Group();
+  private readonly shipVisual = new Group();
   private readonly playerRadius = this.debugRenderer.createPlayerRadius(GAME_CONFIG.ship.radius);
   private readonly visibleRadiusHelper = this.debugRenderer.createChunkRadiusHelper('visibleRadius');
   private readonly interactiveRadiusHelper = this.debugRenderer.createChunkRadiusHelper('interactiveRadius');
@@ -80,6 +82,8 @@ export class RenderApp {
   private readonly debugMineSegs: LineSegments = this.debugRenderer.createDebugSegments('#ff4444', 32);
   private prevYaw = 0;
   private prevPitch = -0.28;
+  private shipBank = 0;
+  private prevLateralDrift = 0;
   private readonly cameraFocus = new Vector3(
     GAME_CONFIG.world.spawn.x,
     GAME_CONFIG.world.spawn.y,
@@ -134,7 +138,9 @@ export class RenderApp {
     for (const chunk of this.chunkGroups.values()) {
       this.releaseChunkObjects(chunk);
       chunk.staticMesh?.geometry.dispose();
-      chunk.blackHoleMesh?.geometry.dispose();
+      if (chunk.blackHoleMesh) {
+        disposeGroupMeshes(chunk.blackHoleMesh);
+      }
     }
     this.chunkGroups.clear();
     this.renderer.dispose();
@@ -178,7 +184,9 @@ export class RenderApp {
       }
       this.releaseChunkObjects(existing);
       existing.staticMesh?.geometry.dispose();
-      existing.blackHoleMesh?.geometry.dispose();
+      if (existing.blackHoleMesh) {
+        disposeGroupMeshes(existing.blackHoleMesh);
+      }
       this.world.remove(existing.group);
       if (existing.debug) {
         this.world.remove(existing.debug);
@@ -248,6 +256,17 @@ export class RenderApp {
     this.playerMesh.quaternion.setFromEuler(
       new Euler(-orientation.pitch, orientation.yaw, 0, 'YXZ'),
     );
+    const bank = updateShipBank({
+      velocity: frame.player.velocity,
+      speed: frame.player.speed,
+      orientation: this.playerMesh.quaternion,
+      previousBank: this.shipBank,
+      previousLateralDrift: this.prevLateralDrift,
+      dt: 1 / Math.max(1, frame.fps),
+    });
+    this.shipBank = bank.bank;
+    this.prevLateralDrift = bank.lateralDrift;
+    this.shipVisual.rotation.z = this.shipBank;
     this.playerRadius.position.copy(frame.player.position);
     this.playerRadius.visible = this.debugEnabled;
     this.updateDebugVectors(frame.player, frame.predictor, frame.chunks);
@@ -831,6 +850,7 @@ export class RenderApp {
 
   private setupPlayerMesh(): void {
     this.playerMesh.add(this.playerRadius);
+    this.playerMesh.add(this.shipVisual);
     this.scene.add(this.playerMesh);
     this.loadShipModel();
   }
@@ -862,7 +882,7 @@ export class RenderApp {
         obj.position.sub(center);
         // Sit slightly below center so it doesn't clip camera rig.
         obj.position.y = 0.0;
-        this.playerMesh.add(obj);
+        this.shipVisual.add(obj);
       });
     });
   }
@@ -904,4 +924,20 @@ function dampAngle(current: number, target: number, blend: number): number {
 
 function chunkDistance(a: ChunkCoord, b: ChunkCoord): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.z - b.z));
+}
+
+function disposeGroupMeshes(group: Group): void {
+  group.traverse((object) => {
+    if (!(object instanceof Mesh)) {
+      return;
+    }
+    object.geometry.dispose();
+    if (Array.isArray(object.material)) {
+      for (const material of object.material) {
+        material.dispose();
+      }
+      return;
+    }
+    object.material.dispose();
+  });
 }

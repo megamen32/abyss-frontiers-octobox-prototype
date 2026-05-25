@@ -2,14 +2,17 @@ import {
   AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  CircleGeometry,
   Color,
+  Group,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
-  SphereGeometry,
+  TorusGeometry,
   Vector3,
   type Material,
 } from 'three';
-import type { ChunkData, Obstacle } from '../types';
+import type { ChunkData, Face, Obstacle } from '../types';
 import { GAME_CONFIG } from '../config';
 
 export function createStaticChunkMesh(chunk: ChunkData, material: Material): Mesh | null {
@@ -36,27 +39,64 @@ export function createStaticChunkMesh(chunk: ChunkData, material: Material): Mes
   return mesh;
 }
 
-export function createBlackHoleEntrance(chunk: ChunkData): Mesh | null {
-  if (!chunk.caveEntranceCenter) return null;
+export function createBlackHoleEntrance(chunk: ChunkData): Group | null {
+  if (!chunk.caveEntranceCenter || !chunk.caveEntranceFace || !chunk.caveEntranceRadius) return null;
   const center = new Vector3(chunk.caveEntranceCenter.x, chunk.caveEntranceCenter.y, chunk.caveEntranceCenter.z);
-  const geo = new SphereGeometry(GAME_CONFIG.blackHole.entranceRadius, 32, 24);
-  const normals = geo.attributes.normal.array as Float32Array;
-  for (let i = 0; i < normals.length; i++) {
-    normals[i] *= -1;
+  const radius = chunk.caveEntranceRadius;
+  const group = new Group();
+
+  const rimRadius = radius * (1 - GAME_CONFIG.blackHole.rimThickness * 0.5);
+  const rimTube = Math.max(4, radius * GAME_CONFIG.blackHole.rimThickness);
+  const rimGeo = new TorusGeometry(rimRadius, rimTube, 16, 48);
+  const rimPositions = rimGeo.attributes.position.array as Float32Array;
+  for (let i = 0; i < rimPositions.length; i += 3) {
+    const wobble = 1 + 0.08 * Math.sin(rimPositions[i] * 0.08 + rimPositions[i + 1] * 0.11 + rimPositions[i + 2] * 0.07);
+    rimPositions[i] *= wobble;
+    rimPositions[i + 1] *= wobble;
+    rimPositions[i + 2] *= wobble;
   }
-  geo.attributes.normal.needsUpdate = true;
-  const mat = new MeshStandardMaterial({
-    color: 0x000000,
+  rimGeo.attributes.position.needsUpdate = true;
+  rimGeo.computeVertexNormals();
+  const rimMat = new MeshStandardMaterial({
+    color: new Color('#5f7680'),
+    emissive: new Color('#1a303f'),
+    emissiveIntensity: 0.45,
+    roughness: 0.88,
+    metalness: 0.05,
+  });
+  const rim = new Mesh(rimGeo, rimMat);
+
+  const glowGeo = new CircleGeometry(radius * GAME_CONFIG.blackHole.glowRadiusMultiplier, 48);
+  const glowMat = new MeshBasicMaterial({
+    color: new Color('#8fe3ff'),
     transparent: true,
-    opacity: 0.75,
+    opacity: 0.32,
     blending: AdditiveBlending,
     depthWrite: false,
-    roughness: 0.3,
-    metalness: 0.0,
   });
-  const mesh = new Mesh(geo, mat);
-  mesh.position.copy(center);
-  return mesh;
+  const glow = new Mesh(glowGeo, glowMat);
+  glow.position.z = -radius * 0.08;
+
+  orientEntrance(group, chunk.caveEntranceFace);
+  group.position.copy(center);
+  group.add(glow, rim);
+  return group;
+}
+
+function orientEntrance(group: Group, face: Face): void {
+  switch (face) {
+    case 'px':
+    case 'nx':
+      group.rotation.y = Math.PI / 2;
+      break;
+    case 'py':
+    case 'ny':
+      group.rotation.x = Math.PI / 2;
+      break;
+    case 'pz':
+    case 'nz':
+      break;
+  }
 }
 
 export function isRepresentedByStaticChunkMesh(chunk: ChunkData, obstacle: Obstacle): boolean {
