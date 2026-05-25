@@ -3,6 +3,7 @@ import {
   BoxGeometry,
   Color,
   DirectionalLight,
+  FogExp2,
   Group,
   MathUtils,
   Mesh,
@@ -22,7 +23,7 @@ import { orientationFromLook } from '../simulation/player';
 
 export class RenderApp {
   readonly hud: Hud;
-  readonly cameraState: CameraState = { yaw: 0, pitch: -0.28 };
+  readonly cameraState: CameraState = { yaw: 0, pitch: -0.28, lastManualLookAt: 0 };
   private readonly shell = document.createElement('div');
   private readonly viewport = document.createElement('div');
   private readonly scene = new Scene();
@@ -54,7 +55,7 @@ export class RenderApp {
     this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor));
     this.viewport.append(this.renderer.domElement);
 
-    this.scene.fog = null;
+    this.scene.fog = new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), 0.012);
     this.scene.add(this.world);
     this.setupLights();
     this.setupPlayerMesh();
@@ -129,6 +130,12 @@ export class RenderApp {
     depth: number;
   }): void {
     const orientation = orientationFromLook(frame.player.lookDirection);
+    const now = performance.now() * 0.001;
+    if (now - this.cameraState.lastManualLookAt > GAME_CONFIG.camera.followLookDelay) {
+      const autoBlend = 1 - Math.exp(-GAME_CONFIG.camera.followLookDamping * 0.016);
+      this.cameraState.yaw = dampAngle(this.cameraState.yaw, orientation.yaw, autoBlend);
+      this.cameraState.pitch = MathUtils.lerp(this.cameraState.pitch, orientation.pitch * 0.65, autoBlend);
+    }
     this.playerMesh.position.copy(frame.player.position);
     this.playerMesh.rotation.set(orientation.pitch, orientation.yaw, 0);
     this.playerRadius.position.copy(frame.player.position);
@@ -147,7 +154,7 @@ export class RenderApp {
       .applyAxisAngle(new Vector3(0, 1, 0), this.cameraState.yaw);
     const desiredCamera = frame.player.position.clone().add(cameraOffset);
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-6 * GAME_CONFIG.camera.smoothness));
-    this.camera.lookAt(frame.player.position);
+    this.camera.lookAt(frame.player.position.clone().add(frame.player.lookDirection.clone().multiplyScalar(18)));
 
     this.hud.render({
       hp: frame.player.hp,
@@ -212,10 +219,13 @@ export class RenderApp {
   }
 
   private setupLights(): void {
-    this.scene.add(new AmbientLight(new Color('#87b7d5'), 1.4));
-    const keyLight = new DirectionalLight(new Color('#f5d2a4'), 1.6);
-    keyLight.position.set(24, 36, 18);
+    this.scene.add(new AmbientLight(new Color('#8fb8d2'), 1.6));
+    const keyLight = new DirectionalLight(new Color('#ffd7a6'), 1.95);
+    keyLight.position.set(14, 18, 10);
     this.scene.add(keyLight);
+    const rimLight = new DirectionalLight(new Color('#5dbef4'), 1.05);
+    rimLight.position.set(-12, 8, -16);
+    this.scene.add(rimLight);
   }
 
   private setupPlayerMesh(): void {
@@ -252,6 +262,7 @@ export class RenderApp {
         GAME_CONFIG.camera.pitchMin,
         GAME_CONFIG.camera.pitchMax,
       );
+      this.cameraState.lastManualLookAt = performance.now() * 0.001;
     });
   }
 
@@ -260,4 +271,9 @@ export class RenderApp {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   };
+}
+
+function dampAngle(current: number, target: number, blend: number): number {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + delta * blend;
 }

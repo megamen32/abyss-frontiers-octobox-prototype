@@ -4,6 +4,7 @@ export type Face = 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz';
 export type ObstacleType = 'sphere' | 'box';
 export type ObstacleMotion = 'static' | 'slow_rotate' | 'linear_drift';
 export type CellKind = 'free' | 'obstacle' | 'empty';
+export type GenerationMode = 'scatter' | 'cave';
 
 export interface ChunkCoord {
   x: number;
@@ -30,6 +31,7 @@ export interface LeafCell {
   depth: number;
   bounds: AABB;
   kind: CellKind;
+  caveBias: number;
 }
 
 export interface Obstacle {
@@ -83,6 +85,7 @@ export interface InputState {
 export interface CameraState {
   yaw: number;
   pitch: number;
+  lastManualLookAt: number;
 }
 
 export interface PlayerState {

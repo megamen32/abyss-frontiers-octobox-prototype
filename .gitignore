@@ -3,3 +3,5 @@ dist/
 .playwright-mcp/
 *.png
 .DS_Store
+.vite-dev.pid
+.vite-dev.log

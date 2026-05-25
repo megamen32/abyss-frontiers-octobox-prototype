@@ -30,8 +30,9 @@ export class ChunkGenerator {
     const loot = placeLoot(cells, portals, rng);
     const adjacency = adjacencyAll.filter(([a, b]) => freeIds.has(a) && freeIds.has(b));
 
+    const obstacleCells = new Set(obstacles.map((obstacle) => obstacle.cellId));
     for (const cell of cells) {
-      if (cell.kind === 'empty' && rng.next() < 0.55) {
+      if (obstacleCells.has(cell.id)) {
         cell.kind = 'obstacle';
       }
     }

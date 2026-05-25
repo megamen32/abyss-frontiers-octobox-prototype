@@ -49,6 +49,17 @@ export function buildNavigableSet(
   const root = cells.find((cell) => passableIds.has(cell.id) && containsPoint(cell.bounds, center)) ?? cells[0];
   const freeIds = new Set<string>([root.id]);
 
+  if (GAME_CONFIG.world.generationMode === 'cave') {
+    for (const cell of cells) {
+      if (!passableIds.has(cell.id)) {
+        continue;
+      }
+      if (cell.caveBias >= GAME_CONFIG.world.caveCoreBias) {
+        freeIds.add(cell.id);
+      }
+    }
+  }
+
   for (const portal of portals) {
     const portalCell = findBestPortalCell(cells, portal, passableIds);
     if (!portalCell) {
@@ -65,7 +76,8 @@ export function buildNavigableSet(
       const size = aabbSize(cell.bounds);
       const sizeFactor = clamp(Math.min(size.x, size.y, size.z) / 16, 0.25, 1.4);
       const centerBias = 1 - Math.min(distance, 1);
-      return { cell, weight: sizeFactor * 0.6 + centerBias * 0.4 };
+      const caveBias = GAME_CONFIG.world.generationMode === 'cave' ? cell.caveBias : 0.5;
+      return { cell, weight: sizeFactor * 0.45 + centerBias * 0.2 + caveBias * 0.35 };
     })
     .sort((a, b) => b.weight - a.weight);
 
@@ -73,7 +85,10 @@ export function buildNavigableSet(
     if (freeIds.has(candidate.cell.id)) {
       continue;
     }
-    const threshold = GAME_CONFIG.world.freeBoxProbability * (0.45 + candidate.weight * 0.9);
+    const thresholdBase = GAME_CONFIG.world.generationMode === 'cave'
+      ? GAME_CONFIG.world.freeBoxProbability * 0.35
+      : GAME_CONFIG.world.freeBoxProbability;
+    const threshold = thresholdBase * (0.45 + candidate.weight * 0.9);
     if (rng.next() > threshold) {
       continue;
     }

@@ -54,23 +54,32 @@ describe('ChunkGenerator', () => {
 
   it('produces varied obstacle scales across nearby chunks', () => {
     const generator = new ChunkGenerator(133742);
-    const coords = [
-      { x: 0, y: 0, z: 0 },
-      { x: 1, y: 0, z: 0 },
-      { x: 0, y: 1, z: 0 },
-      { x: 0, y: 0, z: 1 },
-      { x: -1, y: 0, z: 0 },
-      { x: 0, y: -1, z: 0 },
-    ];
-    const chunks = coords.map((coord) => generator.generate(coord));
-    const radii = chunks.flatMap((chunk) => chunk.obstacles.map((obstacle) => obstacle.radius ?? obstacle.size?.length() ?? 0));
-    expect(Math.min(...radii)).toBeLessThan(1.1);
-    expect(Math.max(...radii)).toBeGreaterThan(6.5);
+    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
+    expect(chunk.obstacles.every((obstacle) => obstacle.type === 'box')).toBe(true);
+    for (const obstacle of chunk.obstacles) {
+      const cell = chunk.cells.find((candidate) => candidate.id === obstacle.cellId);
+      expect(cell).toBeDefined();
+      expect(obstacle.position.x).toBeCloseTo((cell!.bounds.min.x + cell!.bounds.max.x) * 0.5);
+      expect(obstacle.position.y).toBeCloseTo((cell!.bounds.min.y + cell!.bounds.max.y) * 0.5);
+      expect(obstacle.position.z).toBeCloseTo((cell!.bounds.min.z + cell!.bounds.max.z) * 0.5);
+      expect(obstacle.size?.x).toBeCloseTo(cell!.bounds.max.x - cell!.bounds.min.x);
+      expect(obstacle.size?.y).toBeCloseTo(cell!.bounds.max.y - cell!.bounds.min.y);
+      expect(obstacle.size?.z).toBeCloseTo(cell!.bounds.max.z - cell!.bounds.min.z);
+    }
+  });
+
+  it('keeps a freer center in cave mode with 3x3x3 splitting', () => {
+    const generator = new ChunkGenerator(133742);
+    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
+    const sorted = [...chunk.cells].sort((a, b) => b.caveBias - a.caveBias);
+    const centralCells = sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.08)));
+    const blockedCentral = centralCells.filter((cell) => cell.kind === 'obstacle').length;
+    expect(blockedCentral).toBeLessThanOrEqual(Math.floor(centralCells.length * 0.4));
   });
 
   it('keeps the ship moving and steers slower under boost', () => {
     const player = createInitialPlayerState();
-    const camera = { yaw: 0, pitch: 0 };
+    const camera = { yaw: 0, pitch: 0, lastManualLookAt: 0 };
 
     updatePlayer(
       player,

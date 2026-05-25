@@ -41,7 +41,12 @@ export class RenderPools {
     () =>
       new Mesh(
         new BoxGeometry(1, 1, 1),
-        new MeshStandardMaterial({ color: new Color('#824331'), roughness: 0.75, metalness: 0.1 }),
+        new MeshStandardMaterial({
+          color: new Color('#b46843'),
+          emissive: new Color('#34170f'),
+          roughness: 0.72,
+          metalness: 0.08,
+        }),
       ),
   );
 
