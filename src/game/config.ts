@@ -36,7 +36,7 @@ export const GAME_CONFIG = {
     // Rate at which targetThrustForward drifts back toward thrustForward when no steering key is held.
     // Acts as angular drag — prevents the ship from spinning freely after a turn. Unit: 1/s.
     // 0 = no damping, higher = faster return to neutral. ~4 gives ~250ms settling time.
-    steeringAngularDrag: 2.0,
+    steeringAngularDrag: 4.0,
     // Thrust efficiency when completely stalled (angle ≥ stallAngleDeg). 0 = no thrust while stalled,
     // 1 = full thrust regardless. Current value keeps 25 % thrust at max stall.
     thrustEfficiencyAtFullStall: 0.8,
@@ -134,10 +134,10 @@ export const GAME_CONFIG = {
     // FPS threshold below which the spawn budget is reduced by 1 each sample window.
     spawnBudgetFpsThreshold: 30,
     // Sampling window in seconds over which average FPS is measured for budget adjustment.
-    spawnBudgetSampleSeconds: 10,
+    spawnBudgetSampleSeconds: 20,
     // Depth (units below surface, y-axis) over which the difficulty gradually ramps from 0 to 1.
     // Controls how fast deeper chunks become harder and denser.
-    depthDifficultyRamp: 320,
+    depthDifficultyRamp: 1000,
     // Bonus probability added to obstacle placement per unit of depth danger [0–1]. At max danger
     // the obstacle fill chance rises by this amount (e.g. 0.55 + 0.18 = 0.73 base chance).
     depthObstacleDensityBonus: 0.18,
@@ -297,15 +297,22 @@ export const GAME_CONFIG = {
     debugEnabled: false,
     // How many chunks around the player are rendered in the chunk debug overlay (0 = current only).
     debugChunkRadius: 0,
-    // Background sky color as a hex value (Three.js Color format).
+    // How many chunks of visibility the fog allows. This is the PRIMARY fog parameter — density
+    // is computed from it so generation pop-in is always hidden.
+    // fogDensity = -log(0.03) / ((fogRenderRadiusChunks - 0.5) * chunkSize)
+    fogRenderRadiusChunks: 3,
+    // Sky and fog color near the surface (dangerLevel = 0).
     skyColor: 0x03111a,
-    // Exponential fog color. Should be similar to skyColor so distant objects fade smoothly.
     fogColor: 0x02070c,
-    // Fog density coefficient for Three.js FogExp2. Higher = thicker fog, shorter visibility.
-    // Effective visibility ≈ sqrt(-log(fogVisibilityThreshold)) / fogDensity ≈ 156 units at default.
-    fogDensity: 0.012,
-    // Opacity threshold [0–1] at which a fogged point is considered invisible. Used to derive
-    // the effective visibility distance from fogDensity.
-    fogVisibilityThreshold: 0.03,
+    // Sky and fog color deep in the abyss (dangerLevel = 1). Lerped from surface colors.
+    abyssSkyColor: 0x000205,
+    abyssFogColor: 0x000102,
+    // Ambient light intensity at the surface (bright, light from above).
+    surfaceAmbientIntensity: 1.6,
+    // Ambient light intensity at full abyss depth (dim, oppressive darkness).
+    abyssAmbientIntensity: 0.35,
+    // Color and opacity of the water surface plane visible from below.
+    waterColor: 0x1a6a9e,
+    waterOpacity: 0.65,
   },
 } as const;

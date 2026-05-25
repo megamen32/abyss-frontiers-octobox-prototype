@@ -11,8 +11,10 @@ import {
   LineSegments,
   MathUtils,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PerspectiveCamera,
+  PlaneGeometry,
   Scene,
   SphereGeometry,
   Line,
@@ -29,7 +31,7 @@ import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
-import { fogChunkRenderRadius, fogVisibilityDistance } from '../utils/visibility';
+import { fogChunkRenderRadius, fogDensity, fogVisibilityDistance } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
 import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
@@ -85,6 +87,9 @@ export class RenderApp {
     GAME_CONFIG.world.spawn.y,
     GAME_CONFIG.world.spawn.z + GAME_CONFIG.camera.lookAheadMin,
   );
+  private readonly sceneFog = new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), fogDensity());
+  private readonly ambientLight = new AmbientLight(new Color('#8fb8d2'), GAME_CONFIG.visuals.surfaceAmbientIntensity);
+  private readonly waterSurface = this.createWaterSurface();
   private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private debugUiVisible = false;
@@ -105,8 +110,9 @@ export class RenderApp {
     this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor));
     this.viewport.append(this.renderer.domElement);
 
-    this.scene.fog = new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), GAME_CONFIG.visuals.fogDensity);
+    this.scene.fog = this.sceneFog;
     this.scene.add(this.world);
+    this.world.add(this.waterSurface);
     this.setupLights();
     this.setupPlayerMesh();
     this.world.add(this.visibleRadiusHelper, this.interactiveRadiusHelper, this.simulationRadiusHelper);
@@ -153,9 +159,7 @@ export class RenderApp {
 
   setFogEnabled(enabled: boolean): void {
     this.fogEnabled = enabled;
-    this.scene.fog = enabled
-      ? new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), GAME_CONFIG.visuals.fogDensity)
-      : null;
+    this.scene.fog = enabled ? this.sceneFog : null;
   }
 
   syncChunks(added: ChunkData[], removed: string[]): void {
@@ -302,6 +306,8 @@ export class RenderApp {
     this.camera.lookAt(this.cameraLookAt);
 
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
+
+    this.updateDepthVisuals(frame.dangerLevel);
 
     const drawStart = performance.now();
     this.renderer.render(this.scene, this.camera);
@@ -682,13 +688,36 @@ export class RenderApp {
   }
 
   private setupLights(): void {
-    this.scene.add(new AmbientLight(new Color('#8fb8d2'), 1.6));
+    this.scene.add(this.ambientLight);
     const keyLight = new DirectionalLight(new Color('#ffd7a6'), 1.95);
     keyLight.position.set(14, 18, 10);
     this.scene.add(keyLight);
     const rimLight = new DirectionalLight(new Color('#5dbef4'), 1.05);
     rimLight.position.set(-12, 8, -16);
     this.scene.add(rimLight);
+  }
+
+  private createWaterSurface(): Mesh {
+    const geo = new PlaneGeometry(8000, 8000);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new MeshBasicMaterial({
+      color: new Color(GAME_CONFIG.visuals.waterColor),
+      transparent: true,
+      opacity: GAME_CONFIG.visuals.waterOpacity,
+      depthWrite: false,
+    });
+    const mesh = new Mesh(geo, mat);
+    mesh.position.y = GAME_CONFIG.world.spawn.y;
+    mesh.renderOrder = 1;
+    return mesh;
+  }
+
+  private updateDepthVisuals(dangerLevel: number): void {
+    const d = dangerLevel;
+    this.sceneFog.color.set(new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d));
+    this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyColor), d));
+    this.ambientLight.intensity = GAME_CONFIG.visuals.surfaceAmbientIntensity
+      + (GAME_CONFIG.visuals.abyssAmbientIntensity - GAME_CONFIG.visuals.surfaceAmbientIntensity) * d;
   }
 
   private setupPlayerMesh(): void {

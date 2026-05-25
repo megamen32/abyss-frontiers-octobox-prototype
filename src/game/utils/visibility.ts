@@ -1,15 +1,27 @@
 import { GAME_CONFIG } from '../config';
 
+// Opacity at which a fogged point is considered invisible. Used to compute fogDensity.
+const FOG_THRESHOLD = 0.03;
+
+/**
+ * Computes the FogExp2 density so that objects at the chunk-generation boundary
+ * are invisible. Uses (fogRenderRadiusChunks - 0.5) as the effective hide distance
+ * to give a half-chunk safety margin — the last rendered chunk is fully invisible
+ * before its far face is reached.
+ *
+ * density = -log(threshold) / hideDistance
+ */
+export function fogDensity(): number {
+  const hideDistance = (GAME_CONFIG.visuals.fogRenderRadiusChunks - 0.5) * GAME_CONFIG.world.chunkSize;
+  return -Math.log(FOG_THRESHOLD) / hideDistance;
+}
+
 export function fogVisibilityDistance(): number {
-  const { fogDensity, fogVisibilityThreshold } = GAME_CONFIG.visuals;
-  if (fogDensity <= 0) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return Math.sqrt(-Math.log(fogVisibilityThreshold)) / fogDensity;
+  return GAME_CONFIG.visuals.fogRenderRadiusChunks * GAME_CONFIG.world.chunkSize;
 }
 
 export function fogChunkRenderRadius(): number {
-  return Math.max(1, Math.ceil(fogVisibilityDistance() / GAME_CONFIG.world.chunkSize));
+  return GAME_CONFIG.visuals.fogRenderRadiusChunks;
 }
 
 export function chunkGenerationRadius(): number {
