@@ -73,6 +73,12 @@ export interface ChunkData {
   loot: Loot[];
 }
 
+export interface ChunkSyncResult {
+  added: ChunkData[];
+  removed: string[];
+  currentCoord: ChunkCoord;
+}
+
 export interface InputState {
   forward: number;
   right: number;

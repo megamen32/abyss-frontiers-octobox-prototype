@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
-import type { ChunkCoord, ChunkData } from '../types';
+import type { ChunkCoord, ChunkData, ChunkSyncResult } from '../types';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { ChunkGenerator } from '../content/chunkGenerator';
 import { hydrateChunk } from '../content/chunkPayload';
@@ -31,30 +31,25 @@ export class ChunkManager {
     });
   }
 
-  syncAround(position: Vector3): { added: ChunkData[]; removed: string[]; currentCoord: ChunkCoord } {
+  syncAround(position: Vector3, forward: Vector3): ChunkSyncResult {
     const currentCoord = worldToChunkCoord(position);
     const radius = GAME_CONFIG.world.activeRadius;
     const wanted = new Set<string>();
     const added: ChunkData[] = [];
 
-    for (let x = -radius; x <= radius; x += 1) {
-      for (let y = -radius; y <= radius; y += 1) {
-        for (let z = -radius; z <= radius; z += 1) {
-          const coord = { x: currentCoord.x + x, y: currentCoord.y + y, z: currentCoord.z + z };
-          const key = chunkKey(coord);
-          wanted.add(key);
-          if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
-            if (this.activeChunks.size === 0 && this.pendingKeys.size === 0 && key === chunkKey(currentCoord)) {
-              const chunk = this.generator.generate(coord);
-              this.activeChunks.set(key, chunk);
-              added.push(chunk);
-            } else {
-              this.pendingKeys.add(key);
-              const worker = this.workers[this.roundRobinIndex % this.workers.length];
-              this.roundRobinIndex += 1;
-              worker.postMessage({ type: 'generate', seed: this.seed, coord });
-            }
-          }
+    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward)) {
+      const key = chunkKey(coord);
+      wanted.add(key);
+      if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
+        if (this.activeChunks.size === 0 && this.pendingKeys.size === 0 && key === chunkKey(currentCoord)) {
+          const chunk = this.generator.generate(coord);
+          this.activeChunks.set(key, chunk);
+          added.push(chunk);
+        } else {
+          this.pendingKeys.add(key);
+          const worker = this.workers[this.roundRobinIndex % this.workers.length];
+          this.roundRobinIndex += 1;
+          worker.postMessage({ type: 'generate', seed: this.seed, coord });
         }
       }
     }
@@ -102,4 +97,33 @@ export class ChunkManager {
     }
     this.readyQueue.push(chunk);
   };
+}
+
+export function prioritizedChunkCoords(currentCoord: ChunkCoord, radius: number, forward: Vector3): ChunkCoord[] {
+  const normalizedForward = forward.lengthSq() > 0.0001 ? forward.clone().normalize() : new Vector3(0, 0, 1);
+  const queue: Array<{ coord: ChunkCoord; score: number }> = [];
+
+  for (let x = -radius; x <= radius; x += 1) {
+    for (let y = -radius; y <= radius; y += 1) {
+      for (let z = -radius; z <= radius; z += 1) {
+        const coord = { x: currentCoord.x + x, y: currentCoord.y + y, z: currentCoord.z + z };
+        const offset = new Vector3(x, y, z);
+        if (offset.lengthSq() === 0) {
+          queue.push({ coord, score: Number.POSITIVE_INFINITY });
+          continue;
+        }
+        const direction = offset.normalize();
+        const forwardness = direction.dot(normalizedForward);
+        const distancePenalty = offset.length() * 0.35;
+        const verticalPenalty = Math.abs(direction.y) * 0.15;
+        queue.push({
+          coord,
+          score: forwardness * 3 - distancePenalty - verticalPenalty,
+        });
+      }
+    }
+  }
+
+  queue.sort((a, b) => b.score - a.score);
+  return queue.map((entry) => entry.coord);
 }

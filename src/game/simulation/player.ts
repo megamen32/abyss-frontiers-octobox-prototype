@@ -29,8 +29,8 @@ export function updatePlayer(player: PlayerState, input: InputState, camera: Cam
     -Math.sin(camera.pitch),
     Math.cos(camera.yaw) * Math.cos(camera.pitch),
   ).normalize();
-  const right = new Vector3().crossVectors(cameraForward, UP).normalize();
-  const cameraUp = new Vector3().crossVectors(right, cameraForward).normalize();
+  const right = new Vector3().crossVectors(UP, cameraForward).normalize();
+  const cameraUp = new Vector3().crossVectors(cameraForward, right).normalize();
   const desiredDirection = new Vector3()
     .addScaledVector(cameraForward, input.forward)
     .addScaledVector(right, input.right)

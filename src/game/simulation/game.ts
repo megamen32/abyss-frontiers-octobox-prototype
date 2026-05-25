@@ -34,7 +34,7 @@ export class Game {
 
   start(): void {
     this.running = true;
-    const initial = this.chunkManager.syncAround(this.player.position);
+    const initial = this.chunkManager.syncAround(this.player.position, this.player.lookDirection);
     this.currentChunk = initial.currentCoord;
     this.render.syncChunks(initial.added, initial.removed);
     requestAnimationFrame(this.loop);
@@ -46,7 +46,7 @@ export class Game {
     this.player = createInitialPlayerState();
     this.chunkManager = new ChunkManager(this.seed);
     this.render.syncChunks([], oldKeys);
-    const initial = this.chunkManager.syncAround(this.player.position);
+    const initial = this.chunkManager.syncAround(this.player.position, this.player.lookDirection);
     this.currentChunk = initial.currentCoord;
     this.render.syncChunks(initial.added, initial.removed);
   }
@@ -73,7 +73,7 @@ export class Game {
     }
 
     updatePlayer(this.player, input, this.render.cameraState, dt);
-    const sync = this.chunkManager.syncAround(this.player.position);
+    const sync = this.chunkManager.syncAround(this.player.position, this.player.lookDirection);
     this.currentChunk = sync.currentCoord;
     this.render.syncChunks(sync.added, sync.removed);
 

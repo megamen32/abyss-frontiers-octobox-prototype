@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ChunkGenerator } from '../src/game/content/chunkGenerator';
+import { GAME_CONFIG } from '../src/game/config';
+import { prioritizedChunkCoords } from '../src/game/simulation/chunkManager';
 import { createInitialPlayerState, updatePlayer } from '../src/game/simulation/player';
 
 function serializeChunk(seed: number, coord: { x: number; y: number; z: number }): string {
@@ -77,6 +79,41 @@ describe('ChunkGenerator', () => {
     expect(blockedCentral).toBeLessThanOrEqual(Math.floor(centralCells.length * 0.4));
   });
 
+  it('keeps leaf cells between ship scale and about twenty ship sizes', () => {
+    const generator = new ChunkGenerator(133742);
+    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
+    const shipDiameter = GAME_CONFIG.ship.radius * 2;
+    const minAllowed = shipDiameter * GAME_CONFIG.world.octoboxMinCellSizeMultiplier;
+    const maxAllowed = shipDiameter * GAME_CONFIG.world.octoboxMaxCellSizeMultiplier;
+
+    for (const cell of chunk.cells) {
+      const minEdge = Math.min(
+        cell.bounds.max.x - cell.bounds.min.x,
+        cell.bounds.max.y - cell.bounds.min.y,
+        cell.bounds.max.z - cell.bounds.min.z,
+      );
+      expect(minEdge).toBeGreaterThanOrEqual(minAllowed - 0.01);
+      expect(minEdge).toBeLessThanOrEqual(maxAllowed + 0.01);
+    }
+  });
+
+  it('avoids oversplitting empty cave core cells', () => {
+    const generator = new ChunkGenerator(133742);
+    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
+    const shipDiameter = GAME_CONFIG.ship.radius * 2;
+    const centerCells = chunk.cells.filter((cell) => cell.caveBias >= GAME_CONFIG.world.caveCoreBias);
+    const largeCenterCells = centerCells.filter((cell) => {
+      const minEdge = Math.min(
+        cell.bounds.max.x - cell.bounds.min.x,
+        cell.bounds.max.y - cell.bounds.min.y,
+        cell.bounds.max.z - cell.bounds.min.z,
+      );
+      return minEdge >= shipDiameter * 3;
+    });
+    expect(centerCells.length).toBeGreaterThan(0);
+    expect(largeCenterCells.length).toBeGreaterThan(0);
+  });
+
   it('keeps the ship moving and steers slower under boost', () => {
     const player = createInitialPlayerState();
     const camera = { yaw: 0, pitch: 0, lastManualLookAt: 0 };
@@ -97,6 +134,13 @@ describe('ChunkGenerator', () => {
     );
     expect(cruiseSpeed).toBeGreaterThan(5);
     expect(player.velocity.length()).toBeGreaterThan(cruiseSpeed);
-    expect(player.lookDirection.x).toBeLessThan(0);
+    expect(player.lookDirection.x).toBeGreaterThan(0);
+  });
+
+  it('prioritizes chunk generation in front of the ship', () => {
+    const player = createInitialPlayerState();
+    const ordered = prioritizedChunkCoords({ x: 0, y: 0, z: 0 }, 1, player.lookDirection);
+    expect(ordered[0]).toEqual({ x: 0, y: 0, z: 0 });
+    expect(ordered[1]).toEqual({ x: 0, y: 0, z: 1 });
   });
 });
