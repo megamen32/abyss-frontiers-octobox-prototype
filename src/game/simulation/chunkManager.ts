@@ -3,7 +3,13 @@ import { GAME_CONFIG } from '../config';
 import { detectCaveChunk } from '../content/caveSystem';
 import type { AABB, ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, Face, ChunkSyncResult } from '../types';
 import { chunkKey, intersectsAabb, worldToChunkCoord } from '../utils/chunk';
-import { chunkEvictionRadius, chunkGenerationRadius } from '../utils/visibility';
+import {
+  chunkEvictionRadius,
+  chunkGenerationRadius,
+  getChunkFrustumPriority,
+  getChunkOcclusionPenalty,
+  type ViewFrustumSnapshot,
+} from '../utils/visibility';
 import { hydrateChunk } from '../content/chunkPayload';
 
 interface ChunkWorkerResponse {
@@ -17,6 +23,7 @@ interface ChunkSyncOptions {
   caveOnly?: boolean;
   retentionAabb?: AABB;
   forcedCaves?: Array<{ coord: ChunkCoord; entranceFace: Face; clusterCenter: ChunkCoord; mouthRadiusChunks: number }>;
+  viewFrustum?: ViewFrustumSnapshot;
 }
 
 export class ChunkManager {
@@ -55,7 +62,7 @@ export class ChunkManager {
     const forcedCaves = new Map((options.forcedCaves ?? []).map((entry) => [chunkKey(entry.coord), entry]));
 
     // Build the generation set (inner radius) — request missing chunks from workers.
-    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed)) {
+    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed, options.viewFrustum, this.activeChunks.values())) {
       const key = chunkKey(coord);
       const forcedEntry = forcedCaves.get(key);
       if (options.caveOnly && !forcedEntry && !detectCaveChunk(this.seed, coord)) {
@@ -170,6 +177,8 @@ export function prioritizedChunkCoords(
   radius: number,
   forward: Vector3,
   speed = 0,
+  viewFrustum?: ViewFrustumSnapshot,
+  blockers?: Iterable<ChunkData>,
 ): ChunkCoord[] {
   const normalizedForward = forward.lengthSq() > 0.0001 ? forward.clone().normalize() : new Vector3(0, 0, 1);
   const predictedChunkOffset = normalizedForward
@@ -197,9 +206,20 @@ export function prioritizedChunkCoords(
         const predictedDistance = offset.distanceTo(predictedChunkOffset);
         const distancePenalty = chunkLen * 0.28;
         const verticalPenalty = Math.abs(direction.y) * 0.15;
+        let frustumScore = 0;
+        let occlusionPenalty = 0;
+        if (viewFrustum) {
+          const size = GAME_CONFIG.world.chunkSize;
+          const bounds = {
+            min: new Vector3(coord.x * size, coord.y * size, coord.z * size),
+            max: new Vector3((coord.x + 1) * size, (coord.y + 1) * size, (coord.z + 1) * size),
+          };
+          frustumScore = getChunkFrustumPriority(bounds, viewFrustum) * 4.5;
+          occlusionPenalty = blockers ? getChunkOcclusionPenalty(bounds, viewFrustum.position, blockers) : 0;
+        }
         queue.push({
           coord,
-          score: forwardness * 3.2 - distancePenalty - verticalPenalty - predictedDistance * 0.6,
+          score: frustumScore + forwardness * 3.2 - distancePenalty - verticalPenalty - predictedDistance * 0.6 - occlusionPenalty,
         });
       }
     }

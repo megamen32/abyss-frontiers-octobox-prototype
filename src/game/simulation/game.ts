@@ -140,6 +140,7 @@ export class Game {
       const chunkSyncStart = performance.now();
       const predictor = ShipPredictor.forPlayer(this.player);
       const syncState = this.resolveChunkSyncState(predictor);
+      const viewFrustum = this.render.getViewFrustumSnapshot();
       const sync = this.chunkManager.syncAround(
         this.player.position,
         syncState.forward,
@@ -148,6 +149,7 @@ export class Game {
           caveOnly: syncState.caveOnly,
           retentionAabb: syncState.retentionAabb,
           forcedCaves: syncState.forcedCaves,
+          viewFrustum,
         },
       );
       this.currentChunk = sync.currentCoord;

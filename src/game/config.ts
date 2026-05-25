@@ -17,7 +17,7 @@ export const GAME_CONFIG = {
     baseDrag: 0.2,
     // Additional drag added when turning. Scales linearly from 0 (straight) to 1 (full stall angle).
     // Total drag = baseDrag + turnRatio*turnDrag + stallAmount*stallDrag + speedLimitDrag.
-    turnDrag: 0.34,
+    turnDrag: 0.2,
     // Additional drag applied at full stall (angle ≥ stallAngleDeg). Creates a strong speed penalty
     // for sharp turns at high speed.
     stallDrag: 0.8,
@@ -32,20 +32,20 @@ export const GAME_CONFIG = {
     stallAngleDeg: 90,
     // Speed at which thrustForward tracks targetThrustForward via slerp. Higher values make the ship
     // respond to steering input more instantly; lower values add inertia. Unit: 1/s (exponential rate).
-    steeringResponsiveness: 20.2,
+    steeringResponsiveness: 200.2,
     // Rate at which targetThrustForward drifts back toward thrustForward when no steering key is held.
     // Acts as angular drag — prevents the ship from spinning freely after a turn. Unit: 1/s.
     // 0 = no damping, higher = faster return to neutral. ~4 gives ~250ms settling time.
-    steeringAngularDrag: 6.0,
+    steeringAngularDrag: 0.0,
     // Thrust efficiency when completely stalled (angle ≥ stallAngleDeg). 0 = no thrust while stalled,
     // 1 = full thrust regardless. Current value keeps 25 % thrust at max stall.
     thrustEfficiencyAtFullStall: 0.8,
     // Visual forward turn rate (rad/s) when the ship is moving slowly. The model rotates to match
     // actual velocity direction; at low speed it rotates slowly.
-    visualForwardTurnRateMin: 1.7,
+    visualForwardTurnRateMin: 10.7,
     // Visual forward turn rate (rad/s) at full speed. The model snaps toward velocity direction more
     // aggressively at high speed so it looks like it's pointing where it flies.
-    visualForwardTurnRateMax: 8.4,
+    visualForwardTurnRateMax: 80.4,
     // Starting hit points. Ship dies when HP reaches 0.
     hp: 100.0,
     // Seconds of invulnerability granted after taking a hit. Prevents rapid successive damage.
@@ -54,27 +54,27 @@ export const GAME_CONFIG = {
 
   camera: {
     // Default distance from the camera to the ship along the orbit offset direction (units).
-    distance: 8.5,
+    distance: 6.5,
     // Default height of the camera above the ship (units). Combined with distance, defines the base
     // camera position in ship-local space before yaw/pitch adjustment.
-    height: 5.4,
+    height: 4.4,
     // Exponential smoothing factor for camera position and lookAt. Lower = more lag, higher = snappier.
     // Used as the rate in: blend = 1 - exp(-k * smoothness * dt).
-    smoothness: 0.3,
+    smoothness: 0.8,
     // Seconds of delay before the camera lookAt direction catches up to the ship heading. Creates
     // the feeling that the camera is "dragged" behind the ship's nose on turns.
-    followLookDelay: 0.22,
+    followLookDelay: 0.00022,
     // Damping rate for lookAt direction lag. Higher values make the lag dissipate faster.
-    followLookDamping: 4.8,
+    followLookDamping: 40.8,
     // Keyboard yaw orbit speed (rad/s) when the player rotates the camera with arrow keys.
     keyboardYawSpeed: 1.8,
     // Keyboard pitch orbit speed (rad/s). Moves camera up/down around the ship.
     keyboardPitchSpeed: 1.45,
     // Half-width of the dead-zone cone (radians) in which small yaw deviations don't trigger camera
     // auto-follow. Prevents the camera from wiggling for tiny heading changes.
-    deadlockHalfWidth: 0.7,
+    deadlockHalfWidth: 0.007,
     // Half-height of the dead-zone cone (radians) for pitch. Same purpose as deadlockHalfWidth.
-    deadlockHalfHeight: 0.7,
+    deadlockHalfHeight: 0.007,
     // When the angle between the camera look direction and the thrust direction exceeds this value
     // (degrees), the thrust-look assist starts blending the camera toward the ship's flight path.
     thrustLookAssistStartAngleDeg: 30,
@@ -85,7 +85,7 @@ export const GAME_CONFIG = {
     thrustLookAssistSpeedThreshold: 17,
     // Maximum blend weight [0–1] the thrust-look assist applies. 1 = camera fully snaps to thrust
     // direction; 0.72 leaves 28 % of the player's manual aim intact.
-    thrustLookAssistMaxBlend: 0.4,
+    thrustLookAssistMaxBlend: 1.0,
     // Vertical field of view in degrees.
     fov: 68,
     // Minimum camera pitch (radians, negative = looking down). Clamps the orbit to avoid flipping.
@@ -94,7 +94,7 @@ export const GAME_CONFIG = {
     pitchMax: 1.2,
     // How many seconds of travel the lookAt target is placed ahead of the ship. Scales with ship
     // speed so at high speed the view opens up further ahead. lookAheadDist = max(lookAheadMin, speed * lookAheadSeconds).
-    lookAheadSeconds: 1.0,
+    lookAheadSeconds: 0.0,
     // Minimum look-ahead distance (units) used when the ship is slow or stationary.
     lookAheadMin: 3,
     // Safety margin as a fraction of the half-FOV. Points must stay this far from screen edges.
@@ -103,8 +103,8 @@ export const GAME_CONFIG = {
     // Points in ship-local space (x=right, y=up, z=forward/nose) that the camera must always keep
     // inside the visible frustum. The camera pulls back until all anchors are on screen.
     shipViewAnchors: [
-      { x: 0, y: 0, z: 1.5 },   // nose
-      { x: 0, y: 0, z: -1.5 },  // tail
+      { x: 0, y: -0.5, z: 1.5 },   // nose
+      { x: 0, y:0.5, z: -1.5 },  // tail
     ],
   },
 

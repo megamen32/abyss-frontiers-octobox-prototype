@@ -36,6 +36,7 @@ import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
 import { updateShipBank } from './shipBank';
 import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
+import { buildFrustumFromSnapshot, fogCullingDistance, type ViewFrustumSnapshot } from '../utils/visibility';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
@@ -176,6 +177,18 @@ export class RenderApp {
     this.scene.fog = enabled ? this.sceneFog : null;
   }
 
+  getViewFrustumSnapshot(): ViewFrustumSnapshot {
+    return {
+      position: this.camera.position.clone(),
+      lookAt: this.cameraLookAt.clone(),
+      up: this.camera.up.clone(),
+      fov: this.camera.fov,
+      aspect: this.camera.aspect,
+      near: this.camera.near,
+      far: this.camera.far,
+    };
+  }
+
   syncChunks(added: ChunkData[], removed: string[]): void {
     for (const key of removed) {
       const existing = this.chunkGroups.get(key);
@@ -307,8 +320,9 @@ export class RenderApp {
     this.prevYaw = this.cameraState.yaw;
     this.prevPitch = this.cameraState.pitch;
 
+    const orbitPitch = Math.max(this.cameraState.pitch, 0);
     const cameraOffset = new Vector3(0, GAME_CONFIG.camera.height, -GAME_CONFIG.camera.distance)
-      .applyAxisAngle(new Vector3(1, 0, 0), this.cameraState.pitch)
+      .applyAxisAngle(new Vector3(1, 0, 0), orbitPitch)
       .applyAxisAngle(new Vector3(0, 1, 0), this.cameraState.yaw);
 
     // Smooth the look-at target so sharp pitch/yaw changes don't teleport the view.
@@ -503,11 +517,17 @@ export class RenderApp {
   }
 
   private shouldRenderChunk(chunkRender: ChunkRenderGroup, player: PlayerState): boolean {
+    const frustum = buildFrustumFromSnapshot(this.getViewFrustumSnapshot());
+    const box = new Box3(chunkRender.chunk.bounds.min.clone(), chunkRender.chunk.bounds.max.clone());
+    const distance = box.distanceToPoint(player.position);
+    const nearFogBoundary = distance <= fogCullingDistance();
+    if (!frustum.intersectsBox(box) && !nearFogBoundary) {
+      return false;
+    }
     if (!this.fogEnabled) {
       return true;
     }
-    const box = new Box3(chunkRender.chunk.bounds.min.clone(), chunkRender.chunk.bounds.max.clone());
-    return box.distanceToPoint(player.position) <= fogVisibilityDistance();
+    return distance <= fogCullingDistance();
   }
 
   private chunkSpawnPriority(chunkRender: ChunkRenderGroup, player: PlayerState): number {
