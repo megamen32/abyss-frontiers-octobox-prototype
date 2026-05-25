@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import { GAME_CONFIG } from '../config';
 import { chunkKey } from '../utils/chunk';
+import { depthBelowSurface } from '../utils/depth';
 import { faceSeed } from '../utils/hash';
 import { SeededRandom } from '../utils/rng';
 
@@ -49,6 +50,8 @@ export function detectCaveChunk(
   coord: ChunkCoord,
 ): CaveEntrance | null {
   if (!GAME_CONFIG.cave.enabled) return null;
+  const chunkMinY = coord.y * GAME_CONFIG.world.chunkSize;
+  if (depthBelowSurface(chunkMinY) <= 0) return null;
   for (const face of ['nx', 'ny', 'nz'] as Face[]) {
     const seed = faceSeed(globalSeed, coord, face);
     const rng = new SeededRandom(seed);
@@ -499,8 +502,11 @@ function buildTunnelMesh(
       const v = s.position
         .clone()
         .add(s.normal.clone().multiplyScalar(cx * s.radius))
-        .add(s.binormal.clone().multiplyScalar(cy * s.radius))
-        .sub(origin);
+        .add(s.binormal.clone().multiplyScalar(cy * s.radius));
+      v.x = Math.max(origin.x, Math.min(v.x, origin.x + GAME_CONFIG.world.chunkSize));
+      v.y = Math.max(origin.y, Math.min(v.y, origin.y + GAME_CONFIG.world.chunkSize));
+      v.z = Math.max(origin.z, Math.min(v.z, origin.z + GAME_CONFIG.world.chunkSize));
+      v.sub(origin);
       positions.push(v.x, v.y, v.z);
       normals.push(
         s.normal.x * cx + s.binormal.x * cy,

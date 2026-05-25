@@ -8,6 +8,7 @@ import {
   Euler,
   FogExp2,
   Group,
+  LineSegments,
   MathUtils,
   Mesh,
   MeshStandardMaterial,
@@ -67,6 +68,10 @@ export class RenderApp {
   private readonly visibleRadiusHelper = this.debugRenderer.createChunkRadiusHelper('visibleRadius');
   private readonly interactiveRadiusHelper = this.debugRenderer.createChunkRadiusHelper('interactiveRadius');
   private readonly simulationRadiusHelper = this.debugRenderer.createChunkRadiusHelper('simulationRadius');
+  // Debug rays: velocity prediction (cyan), camera look-at (yellow), mine targets (red).
+  private readonly debugVelocityRay = this.debugRenderer.createDebugRay('#00e5ff');
+  private readonly debugCameraRay = this.debugRenderer.createDebugRay('#ffe600');
+  private readonly debugMineSegs: LineSegments = this.debugRenderer.createDebugSegments('#ff4444', 32);
   private readonly cameraFocus = new Vector3(
     GAME_CONFIG.world.spawn.x,
     GAME_CONFIG.world.spawn.y,
@@ -104,6 +109,7 @@ export class RenderApp {
     this.setupLights();
     this.setupPlayerMesh();
     this.world.add(this.visibleRadiusHelper, this.interactiveRadiusHelper, this.simulationRadiusHelper);
+    this.world.add(this.debugVelocityRay, this.debugCameraRay, this.debugMineSegs);
     this.installInput();
     this.onResize();
     window.addEventListener('resize', this.onResize);
@@ -224,6 +230,7 @@ export class RenderApp {
     );
     this.playerRadius.position.copy(frame.player.position);
     this.playerRadius.visible = this.debugEnabled;
+    this.updateDebugVectors(frame.player, frame.chunks);
 
     const spawnQueueStart = performance.now();
     this.processChunkSpawnQueue(frame.player, frame.spawnBudget);
@@ -580,6 +587,52 @@ export class RenderApp {
     const worldAnchors = shipAnchorsToWorld(ship, forward, GAME_CONFIG.camera.shipViewAnchors as unknown as { x: number; y: number; z: number }[]);
     const external = this.externalFocusPoints.map(p => ({ x: p.x, y: p.y, z: p.z }));
     return [...worldAnchors, ...external];
+  }
+
+  private updateDebugVectors(player: PlayerState, chunks: Iterable<ChunkData>): void {
+    this.debugVelocityRay.visible = this.debugEnabled;
+    this.debugCameraRay.visible = this.debugEnabled;
+    this.debugMineSegs.visible = this.debugEnabled;
+
+    if (!this.debugEnabled) {
+      return;
+    }
+
+    // Cyan: ship position → predicted position in 1 second (velocity × 1s).
+    const predicted = player.position.clone().addScaledVector(player.velocity, 1.0);
+    this.debugRenderer.updateDebugRay(this.debugVelocityRay, player.position, predicted);
+
+    // Yellow: camera position → smoothed look-at target.
+    this.debugRenderer.updateDebugRay(this.debugCameraRay, this.camera.position, this.cameraLookAt);
+
+    // Red: for each non-dead mine — line from mine to its aim point (target or current pos).
+    const minePairs: Array<[Vector3, Vector3]> = [];
+    for (const chunk of chunks) {
+      for (const mine of chunk.mines) {
+        if (mine.state === 'dead') {
+          continue;
+        }
+        if (mine.state === 'targeting' && mine.targetPosition) {
+          minePairs.push([mine.position.clone(), mine.targetPosition.clone()]);
+        } else if (mine.state === 'launched') {
+          const ahead = mine.position.clone().addScaledVector(mine.velocity.clone().normalize(), 8);
+          minePairs.push([mine.position.clone(), ahead]);
+        } else {
+          // idle — show trigger radius stub (short line pointing up as a marker)
+          const top = mine.position.clone().addScalar(mine.triggerRadius * 0.5);
+          top.x = mine.position.x;
+          top.z = mine.position.z;
+          minePairs.push([mine.position.clone(), top]);
+        }
+        if (minePairs.length >= 32) {
+          break;
+        }
+      }
+      if (minePairs.length >= 32) {
+        break;
+      }
+    }
+    this.debugRenderer.updateDebugSegments(this.debugMineSegs, minePairs);
   }
 
   private updateChunkRadiusHelpers(chunkCoord: { x: number; y: number; z: number }): void {

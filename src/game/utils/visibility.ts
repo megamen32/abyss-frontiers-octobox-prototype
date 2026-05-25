@@ -15,3 +15,10 @@ export function fogChunkRenderRadius(): number {
 export function chunkGenerationRadius(): number {
   return fogChunkRenderRadius() + GAME_CONFIG.world.preloadRadiusPadding;
 }
+
+// Chunks stay loaded until they exceed this radius. The extra buffer prevents
+// evicting chunks the moment the player crosses a boundary, which would leave
+// the renderer empty while new chunks are still being generated.
+export function chunkEvictionRadius(): number {
+  return chunkGenerationRadius() + GAME_CONFIG.world.evictionRadiusPadding;
+}

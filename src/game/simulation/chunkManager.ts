@@ -2,7 +2,7 @@ import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, ChunkSyncResult } from '../types';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
-import { chunkGenerationRadius } from '../utils/visibility';
+import { chunkEvictionRadius, chunkGenerationRadius } from '../utils/visibility';
 import { hydrateChunk } from '../content/chunkPayload';
 
 interface ChunkWorkerResponse {
@@ -41,12 +41,16 @@ export class ChunkManager {
   syncAround(position: Vector3, forward: Vector3, speed: number): ChunkSyncResult {
     const currentCoord = worldToChunkCoord(position);
     const radius = chunkGenerationRadius();
+    const evictRadius = chunkEvictionRadius();
     const wanted = new Set<string>();
+    const keepAlive = new Set<string>();
     const added: ChunkData[] = [];
 
+    // Build the generation set (inner radius) — request missing chunks from workers.
     for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed)) {
       const key = chunkKey(coord);
       wanted.add(key);
+      keepAlive.add(key);
       if (!this.activeChunks.has(key) && !this.pendingKeys.has(key)) {
         this.pendingKeys.add(key);
         const worker = this.workers[this.roundRobinIndex % this.workers.length];
@@ -55,14 +59,27 @@ export class ChunkManager {
       }
     }
 
+    // Build the eviction set (outer radius) — already-loaded chunks in this band are kept alive
+    // even though we won't request new ones there.
+    for (let x = -evictRadius; x <= evictRadius; x += 1) {
+      for (let y = -evictRadius; y <= evictRadius; y += 1) {
+        for (let z = -evictRadius; z <= evictRadius; z += 1) {
+          const coord = { x: currentCoord.x + x, y: currentCoord.y + y, z: currentCoord.z + z };
+          keepAlive.add(chunkKey(coord));
+        }
+      }
+    }
+
+    // wantedKeys governs which worker results are accepted; use the larger keepAlive set so
+    // in-flight chunks for the buffer zone aren't discarded on arrival.
     this.wantedKeys.clear();
-    for (const key of wanted) {
+    for (const key of keepAlive) {
       this.wantedKeys.add(key);
     }
 
     const removed: string[] = [];
     for (const key of this.activeChunks.keys()) {
-      if (!wanted.has(key)) {
+      if (!keepAlive.has(key)) {
         this.activeChunks.delete(key);
         removed.push(key);
       }
@@ -71,7 +88,7 @@ export class ChunkManager {
     const readyQueueStart = performance.now();
     while (this.readyQueue.length > 0) {
       const chunk = this.readyQueue.shift();
-      if (!chunk || !wanted.has(chunk.key) || this.activeChunks.has(chunk.key)) {
+      if (!chunk || !keepAlive.has(chunk.key) || this.activeChunks.has(chunk.key)) {
         continue;
       }
       this.activeChunks.set(chunk.key, chunk);
