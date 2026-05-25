@@ -109,7 +109,7 @@ function computeCaveBias(bounds: AABB): number {
 }
 
 function estimateDensity(bounds: AABB, caveBias: number): number {
-  if (GAME_CONFIG.world.generationMode !== 'cave') {
+  if (GAME_CONFIG.world.generationMode !== ('cave' as string)) {
     return 0.65;
   }
 

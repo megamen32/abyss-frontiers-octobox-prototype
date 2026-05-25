@@ -9,11 +9,20 @@ const TIMING_KEYS: TimingKey[] = [
   'chunkSyncMs',
   'worldMs',
   'renderMs',
+  'renderSpawnQueueMs',
+  'renderChunkUpdateMs',
+  'renderDebugMs',
+  'renderHudCameraMs',
+  'renderDrawMs',
   'hydrateMs',
   'readyQueueMs',
   'workerTotalMs',
   'workerOctoboxMs',
   'workerSerializeMs',
+  'drawCalls',
+  'drawTriangles',
+  'drawLines',
+  'drawPoints',
 ];
 
 export class FrameProfiler {
@@ -24,11 +33,20 @@ export class FrameProfiler {
     chunkSyncMs: 0,
     worldMs: 0,
     renderMs: 0,
+    renderSpawnQueueMs: 0,
+    renderChunkUpdateMs: 0,
+    renderDebugMs: 0,
+    renderHudCameraMs: 0,
+    renderDrawMs: 0,
     hydrateMs: 0,
     readyQueueMs: 0,
     workerTotalMs: 0,
     workerOctoboxMs: 0,
     workerSerializeMs: 0,
+    drawCalls: 0,
+    drawTriangles: 0,
+    drawLines: 0,
+    drawPoints: 0,
   };
 
   addSample(key: TimingKey, value: number): void {

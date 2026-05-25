@@ -34,6 +34,7 @@ export function buildNavigableSet(
   rng: SeededRandom,
   bounds: AABB,
 ): Set<string> {
+  const isCaveMode = GAME_CONFIG.world.generationMode === ('cave' as string);
   const adjacencyMap = toAdjacencyMap(adjacency);
   const minPassage = GAME_CONFIG.world.minPassageRadius * 2;
   const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
@@ -49,7 +50,7 @@ export function buildNavigableSet(
   const root = cells.find((cell) => passableIds.has(cell.id) && containsPoint(cell.bounds, center)) ?? cells[0];
   const freeIds = new Set<string>([root.id]);
 
-  if (GAME_CONFIG.world.generationMode === 'cave') {
+  if (isCaveMode) {
     for (const cell of cells) {
       if (!passableIds.has(cell.id)) {
         continue;
@@ -76,7 +77,7 @@ export function buildNavigableSet(
       const size = aabbSize(cell.bounds);
       const sizeFactor = clamp(Math.min(size.x, size.y, size.z) / 16, 0.25, 1.4);
       const centerBias = 1 - Math.min(distance, 1);
-      const caveBias = GAME_CONFIG.world.generationMode === 'cave' ? cell.caveBias : 0.5;
+      const caveBias = isCaveMode ? cell.caveBias : 0.5;
       return { cell, weight: sizeFactor * 0.45 + centerBias * 0.2 + caveBias * 0.35 };
     })
     .sort((a, b) => b.weight - a.weight);
@@ -85,7 +86,7 @@ export function buildNavigableSet(
     if (freeIds.has(candidate.cell.id)) {
       continue;
     }
-    const thresholdBase = GAME_CONFIG.world.generationMode === 'cave'
+    const thresholdBase = isCaveMode
       ? GAME_CONFIG.world.freeBoxProbability * 0.35
       : GAME_CONFIG.world.freeBoxProbability;
     const threshold = thresholdBase * (0.45 + candidate.weight * 0.9);

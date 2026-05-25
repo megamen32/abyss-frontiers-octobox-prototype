@@ -114,11 +114,20 @@ export interface DebugTimingSnapshot {
   chunkSyncMs: number;
   worldMs: number;
   renderMs: number;
+  renderSpawnQueueMs: number;
+  renderChunkUpdateMs: number;
+  renderDebugMs: number;
+  renderHudCameraMs: number;
+  renderDrawMs: number;
   hydrateMs: number;
   readyQueueMs: number;
   workerTotalMs: number;
   workerOctoboxMs: number;
   workerSerializeMs: number;
+  drawCalls: number;
+  drawTriangles: number;
+  drawLines: number;
+  drawPoints: number;
 }
 
 export interface InputState {

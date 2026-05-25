@@ -2,7 +2,9 @@ import {
   BufferGeometry,
   BoxGeometry,
   Color,
+  DynamicDrawUsage,
   Group,
+  InstancedMesh,
   Line,
   LineBasicMaterial,
   Mesh,
@@ -40,44 +42,37 @@ class ObjectPool<T extends Object3D> {
 }
 
 export class RenderPools {
+  readonly sphereObstacleGeometry = new SphereGeometry(1, 18, 18);
+  readonly sphereObstacleMaterial = new MeshStandardMaterial({ color: new Color('#a4563f'), roughness: 0.7, metalness: 0.12 });
+  readonly boxObstacleGeometry = new BoxGeometry(1, 1, 1);
+  readonly boxObstacleMaterial = new MeshStandardMaterial({
+    color: new Color('#b46843'),
+    emissive: new Color('#34170f'),
+    roughness: 0.72,
+    metalness: 0.08,
+  });
+  readonly coinGeometry = new OctahedronGeometry(0.9, 0);
+  readonly coinMaterial = new MeshStandardMaterial({ color: new Color('#f8c95f'), emissive: new Color('#5e4310') });
+  readonly chestGeometry = new BoxGeometry(1.8, 1.4, 1.2);
+  readonly chestMaterial = new MeshStandardMaterial({ color: new Color('#5d8fbc'), roughness: 0.45, metalness: 0.4 });
+
   readonly sphereObstacle = new ObjectPool<Mesh>(
-    () =>
-      new Mesh(
-        new SphereGeometry(1, 18, 18),
-        new MeshStandardMaterial({ color: new Color('#a4563f'), roughness: 0.7, metalness: 0.12 }),
-      ),
+    () => new Mesh(this.sphereObstacleGeometry, this.sphereObstacleMaterial),
     24,
   );
 
   readonly boxObstacle = new ObjectPool<Mesh>(
-    () =>
-      new Mesh(
-        new BoxGeometry(1, 1, 1),
-        new MeshStandardMaterial({
-          color: new Color('#b46843'),
-          emissive: new Color('#34170f'),
-          roughness: 0.72,
-          metalness: 0.08,
-        }),
-      ),
+    () => new Mesh(this.boxObstacleGeometry, this.boxObstacleMaterial),
     180,
   );
 
   readonly coin = new ObjectPool<Mesh>(
-    () =>
-      new Mesh(
-        new OctahedronGeometry(0.9, 0),
-        new MeshStandardMaterial({ color: new Color('#f8c95f'), emissive: new Color('#5e4310') }),
-      ),
+    () => new Mesh(this.coinGeometry, this.coinMaterial),
     40,
   );
 
   readonly chest = new ObjectPool<Mesh>(
-    () =>
-      new Mesh(
-        new BoxGeometry(1.8, 1.4, 1.2),
-        new MeshStandardMaterial({ color: new Color('#5d8fbc'), roughness: 0.45, metalness: 0.4 }),
-      ),
+    () => new Mesh(this.chestGeometry, this.chestMaterial),
     12,
   );
 
@@ -100,6 +95,13 @@ export class RenderPools {
     },
     12,
   );
+
+  createBoxObstacleBatch(capacity: number): InstancedMesh {
+    const mesh = new InstancedMesh(this.boxObstacleGeometry, this.boxObstacleMaterial, Math.max(1, capacity));
+    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    mesh.count = 0;
+    return mesh;
+  }
 
   releaseObjects(items: Object3D[]): void {
     for (const item of items) {

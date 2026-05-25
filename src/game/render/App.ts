@@ -7,10 +7,13 @@ import {
   DirectionalLight,
   FogExp2,
   Group,
+  InstancedMesh,
+  Matrix4,
   MathUtils,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
+  Quaternion,
   Scene,
   SphereGeometry,
   Line,
@@ -34,9 +37,14 @@ type ChunkRenderGroup = {
   group: Group;
   debug: Group;
   pooled: PooledChunkObject[];
+  boxObstacleBatch: InstancedMesh | null;
+  activeBoxObstacleCount: number;
   coord: ChunkCoord;
   spawnCursor: number;
 };
+
+const INSTANCE_MATRIX = new Matrix4();
+const IDENTITY_QUATERNION = new Quaternion();
 
 export class RenderApp {
   readonly hud: Hud;
@@ -130,11 +138,25 @@ export class RenderApp {
 
     for (const chunk of added) {
       const group = new Group();
+      const boxObstacleCapacity = chunk.obstacles.filter((obstacle) => obstacle.type === 'box').length;
+      const boxObstacleBatch = boxObstacleCapacity > 0 ? this.pools.createBoxObstacleBatch(boxObstacleCapacity) : null;
+      if (boxObstacleBatch) {
+        group.add(boxObstacleBatch);
+      }
       const debug = this.debugRenderer.createChunkDebug(chunk);
       debug.visible = this.debugEnabled && this.chunkDebugEnabled;
       this.world.add(group);
       this.world.add(debug);
-      this.chunkGroups.set(chunk.key, { chunk, group, debug, pooled: [], coord: chunk.coord, spawnCursor: 0 });
+      this.chunkGroups.set(chunk.key, {
+        chunk,
+        group,
+        debug,
+        pooled: [],
+        boxObstacleBatch,
+        activeBoxObstacleCount: 0,
+        coord: chunk.coord,
+        spawnCursor: 0,
+      });
     }
   }
 
@@ -155,6 +177,8 @@ export class RenderApp {
     averageFps: number;
     timings: DebugTimingSnapshot;
   }): void {
+    const renderTimings: DebugTimingSnapshot = { ...frame.timings };
+    const renderStart = performance.now();
     const desiredLookDirection = this.resolveDesiredLookDirection(frame.player);
     const orientation = orientationFromLook(desiredLookDirection);
     const now = performance.now() * 0.001;
@@ -168,14 +192,22 @@ export class RenderApp {
     this.playerRadius.position.copy(frame.player.position);
     this.playerRadius.visible = this.debugEnabled;
 
+    const spawnQueueStart = performance.now();
     this.processChunkSpawnQueue(frame.player, frame.spawnBudget);
+    renderTimings.renderSpawnQueueMs = performance.now() - spawnQueueStart;
 
+    const chunkUpdateStart = performance.now();
     for (const chunkRender of this.chunkGroups.values()) {
       this.updateChunkMeshes(chunkRender);
     }
+    renderTimings.renderChunkUpdateMs = performance.now() - chunkUpdateStart;
 
+    const debugStart = performance.now();
     this.updateChunkRadiusHelpers(frame.chunkCoord);
     this.updateDebugChunkVisibility(frame.chunkCoord);
+    renderTimings.renderDebugMs = performance.now() - debugStart;
+
+    const hudCameraStart = performance.now();
     this.updateCameraFocus(frame.player.position, desiredLookDirection);
 
     const cameraOffset = new Vector3(0, GAME_CONFIG.camera.height, -GAME_CONFIG.camera.distance)
@@ -185,6 +217,16 @@ export class RenderApp {
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-6 * GAME_CONFIG.camera.smoothness));
     this.camera.lookAt(this.cameraFocus.clone().add(desiredLookDirection.multiplyScalar(18)));
 
+    renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
+
+    const drawStart = performance.now();
+    this.renderer.render(this.scene, this.camera);
+    renderTimings.renderDrawMs = performance.now() - drawStart;
+    renderTimings.renderMs = performance.now() - renderStart;
+    renderTimings.drawCalls = this.renderer.info.render.calls;
+    renderTimings.drawTriangles = this.renderer.info.render.triangles;
+    renderTimings.drawLines = this.renderer.info.render.lines;
+    renderTimings.drawPoints = this.renderer.info.render.points;
     this.hud.render({
       hp: frame.player.hp,
       loot: frame.player.loot,
@@ -205,20 +247,35 @@ export class RenderApp {
       fogEnabled: frame.fogEnabled,
       spawnBudget: frame.spawnBudget,
       averageFps: frame.averageFps,
-      timings: frame.timings,
+      timings: renderTimings,
       dead: !frame.player.alive,
     });
-
-    this.renderer.render(this.scene, this.camera);
   }
 
   private updateChunkMeshes(chunkRender: ChunkRenderGroup): void {
-    for (let index = 0; index < chunkRender.pooled.length; index += 1) {
+    let pooledIndex = 0;
+    let boxInstanceIndex = 0;
+    const spawnedCount = chunkRender.spawnCursor;
+    for (let index = 0; index < spawnedCount; index += 1) {
       const target = this.chunkObjectAt(chunkRender.chunk, index);
       if (!target) {
         continue;
       }
-      const object = chunkRender.pooled[index];
+      if (target.kind === 'obstacle' && target.data.type === 'box') {
+        if (!target.data.size) {
+          continue;
+        }
+        INSTANCE_MATRIX.compose(
+          target.data.position,
+          IDENTITY_QUATERNION,
+          target.data.size,
+        );
+        chunkRender.boxObstacleBatch?.setMatrixAt(boxInstanceIndex, INSTANCE_MATRIX);
+        boxInstanceIndex += 1;
+        continue;
+      }
+      const object = chunkRender.pooled[pooledIndex];
+      pooledIndex += 1;
       if (target.kind === 'obstacle') {
         const mesh = object as Mesh;
         mesh.position.copy(target.data.position);
@@ -272,6 +329,12 @@ export class RenderApp {
           telegraph.geometry.computeBoundingSphere();
         }
       }
+    }
+
+    if (chunkRender.boxObstacleBatch) {
+      chunkRender.activeBoxObstacleCount = boxInstanceIndex;
+      chunkRender.boxObstacleBatch.count = boxInstanceIndex;
+      chunkRender.boxObstacleBatch.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -339,6 +402,11 @@ export class RenderApp {
       return;
     }
 
+    if (target.kind === 'obstacle' && target.data.type === 'box') {
+      chunkRender.spawnCursor += 1;
+      return;
+    }
+
     const object = target.kind === 'obstacle'
       ? this.buildObstacleMesh(target.data)
       : target.kind === 'loot'
@@ -365,6 +433,11 @@ export class RenderApp {
     }
     chunkRender.pooled = [];
     chunkRender.spawnCursor = 0;
+    chunkRender.activeBoxObstacleCount = 0;
+    if (chunkRender.boxObstacleBatch) {
+      chunkRender.boxObstacleBatch.count = 0;
+      chunkRender.boxObstacleBatch.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private chunkObjectCount(chunk: ChunkData): number {

@@ -131,21 +131,10 @@ describe('ChunkGenerator', () => {
     }
   });
 
-  it('avoids oversplitting empty cave core cells', () => {
+  it('keeps the zero-density surface chunk free of obstacles', () => {
     const generator = new ChunkGenerator(133742);
-    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
-    const shipDiameter = GAME_CONFIG.ship.radius * 2;
-    const centerCells = chunk.cells.filter((cell) => cell.caveBias >= GAME_CONFIG.world.caveCoreBias);
-    const largeCenterCells = centerCells.filter((cell) => {
-      const minEdge = Math.min(
-        cell.bounds.max.x - cell.bounds.min.x,
-        cell.bounds.max.y - cell.bounds.min.y,
-        cell.bounds.max.z - cell.bounds.min.z,
-      );
-      return minEdge >= shipDiameter * 3;
-    });
-    expect(centerCells.length).toBeGreaterThan(0);
-    expect(largeCenterCells.length).toBeGreaterThan(0);
+    const chunk = generator.generate({ x: 0, y: 1, z: 0 });
+    expect(chunk.obstacles.length).toBe(0);
   });
 
   it('raises world danger and obstacle density with depth', () => {
@@ -273,13 +262,17 @@ describe('ChunkGenerator', () => {
     const framesPerWindow = 10;
     const dt = GAME_CONFIG.world.spawnBudgetSampleSeconds / framesPerWindow;
     const lowFps = GAME_CONFIG.world.spawnBudgetFpsThreshold - 1;
+    const expectedAfterFirstWindow = Math.max(
+      GAME_CONFIG.world.spawnBudgetMin,
+      GAME_CONFIG.world.spawnBudgetInitial - 1,
+    );
 
     for (let index = 0; index < framesPerWindow; index += 1) {
       budget.recordFrame(dt, lowFps);
     }
-    expect(budget.getBudget()).toBe(GAME_CONFIG.world.spawnBudgetInitial - 1);
+    expect(budget.getBudget()).toBe(expectedAfterFirstWindow);
 
-    const extraMinutes = GAME_CONFIG.world.spawnBudgetInitial - GAME_CONFIG.world.spawnBudgetMin - 1;
+    const extraMinutes = Math.max(0, expectedAfterFirstWindow - GAME_CONFIG.world.spawnBudgetMin);
     for (let index = 0; index < extraMinutes * framesPerWindow; index += 1) {
       budget.recordFrame(dt, lowFps);
     }

@@ -155,14 +155,20 @@ export class Hud {
       `Accel +/- ${snapshot.tuning.baseAcceleration.toFixed(1)}  Drag [] ${snapshot.tuning.baseDrag.toFixed(2)}`
       + `  Turn ;' ${snapshot.tuning.turnInputSpeed.toFixed(2)}  Spawn/frame ${snapshot.spawnBudget}`
       + `  Avg FPS ${snapshot.averageFps.toFixed(1)}  Chunk Debug ${snapshot.chunkDebugEnabled ? 'ON' : 'OFF'}`
-      + `  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`;
+      + `  Fog ${snapshot.fogEnabled ? 'ON' : 'OFF'}`
+      + `  Calls ${snapshot.timings.drawCalls.toFixed(0)}  Tris ${snapshot.timings.drawTriangles.toFixed(0)}`;
     this.timingReadout.textContent =
       `Frame ${snapshot.timings.frameMs.toFixed(1)}ms  Input ${snapshot.timings.inputMs.toFixed(1)}`
       + `  Sim ${snapshot.timings.simulationMs.toFixed(1)}  Sync ${snapshot.timings.chunkSyncMs.toFixed(1)}`
       + `  World ${snapshot.timings.worldMs.toFixed(1)}  Render ${snapshot.timings.renderMs.toFixed(1)}`
       + `  Hydrate ${snapshot.timings.hydrateMs.toFixed(1)}  ReadyQ ${snapshot.timings.readyQueueMs.toFixed(1)}`
       + `  Worker ${snapshot.timings.workerTotalMs.toFixed(1)}  Octo ${snapshot.timings.workerOctoboxMs.toFixed(1)}`
-      + `  Serialize ${snapshot.timings.workerSerializeMs.toFixed(1)}`;
+      + `  Serialize ${snapshot.timings.workerSerializeMs.toFixed(1)}`
+      + `  Lines ${snapshot.timings.drawLines.toFixed(0)}  Points ${snapshot.timings.drawPoints.toFixed(0)}`;
+    this.timingReadout.textContent +=
+      `  SpawnQ ${snapshot.timings.renderSpawnQueueMs.toFixed(1)}  MeshUpd ${snapshot.timings.renderChunkUpdateMs.toFixed(1)}`
+      + `  Debug ${snapshot.timings.renderDebugMs.toFixed(1)}  CamHUD ${snapshot.timings.renderHudCameraMs.toFixed(1)}`
+      + `  Draw ${snapshot.timings.renderDrawMs.toFixed(1)}`;
     this.tuningReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
     this.timingReadout.style.display = snapshot.debugEnabled ? 'block' : 'none';
 

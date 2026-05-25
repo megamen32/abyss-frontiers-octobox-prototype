@@ -6,6 +6,7 @@ import { SeededRandom } from '../utils/rng';
 import { worldDangerLevel } from '../utils/depth';
 
 export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: SeededRandom): Obstacle[] {
+  const isCaveMode = GAME_CONFIG.world.generationMode === ('cave' as string);
   const obstacles: Obstacle[] = [];
   const chunkDanger = cells.reduce((maxDanger, cell) => {
     const center = aabbCenter(cell.bounds);
@@ -30,7 +31,7 @@ export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: Seeded
       continue;
     }
 
-    const caveMode = GAME_CONFIG.world.generationMode === 'cave';
+    const caveMode = isCaveMode;
     const depthDanger = worldDangerLevel(aabbCenter(cell.bounds).y);
     if (depthDanger <= 0) {
       continue;
