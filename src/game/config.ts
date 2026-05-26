@@ -251,8 +251,12 @@ export const GAME_CONFIG = {
     // Duration (seconds) of the telegraph animation shown before the mine launches. Gives the
     // player a visual warning to dodge.
     telegraphDuration: 1.3,
-    // Physical radius of the mine (units). Used for collision detection with the player and obstacles.
+    // Physical radius of the mine (units). Minimum size — small mines in tight cells.
     radius: 1.2,
+    // Maximum physical radius a mine can reach when placed in a very large cell.
+    radiusMax: 5.0,
+    // Mine radius = clamp(cellMinEdge * radiusCellFraction, radius, radiusMax).
+    radiusCellFraction: 0.14,
     // HP damage dealt when the mine hits the ship.
     damage: 34,
     // Depth (units below surface) at which mines switch from passive idle to rocket homing.

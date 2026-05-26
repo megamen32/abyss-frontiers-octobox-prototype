@@ -33,6 +33,7 @@ import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
 import type { BoidsSystem } from '../../boids/BoidsSystem';
+import { FishSchool, DEFAULT_FISH_SCHOOL_CONFIG } from './FishSchool';
 import { fogChunkRenderRadius, fogVisibilityDistance, buildFrustumFromSnapshot, fogCullingDistance, computeChunkFade, type ViewFrustumSnapshot } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
@@ -110,6 +111,7 @@ export class RenderApp {
   private smoothFogFar = fogVisibilityDistance();
   private pointerLocked = false;
   private boids: BoidsSystem | null = null;
+  private readonly fishSchool = new FishSchool(DEFAULT_FISH_SCHOOL_CONFIG);
   /** World-space points (boss, explosion, etc.) that must also be visible. */
   private externalFocusPoints: Vector3[] = [];
 
@@ -133,6 +135,7 @@ export class RenderApp {
     this.setupPlayerMesh();
     this.world.add(this.visibleRadiusHelper, this.interactiveRadiusHelper, this.simulationRadiusHelper);
     this.world.add(this.debugVelocityRay, this.debugCameraRay, this.debugMineSegs);
+    this.world.add(this.fishSchool.object3d);
     this.installInput();
     this.onResize();
     window.addEventListener('resize', this.onResize);
@@ -157,6 +160,7 @@ export class RenderApp {
       }
     }
     this.chunkGroups.clear();
+    this.fishSchool.dispose();
     this.renderer.dispose();
   }
 
@@ -400,10 +404,22 @@ export class RenderApp {
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
 
     this.updateDepthVisuals(frame.dangerLevel, maxForwardChunkDist);
+    const fogColor = this.sceneFog.color;
     if (this.boids) {
-      const fogColor = this.sceneFog.color;
       this.boids.setFog({ r: fogColor.r, g: fogColor.g, b: fogColor.b }, 0, this.smoothFogFar);
     }
+    this.fishSchool.setFog(
+      { r: fogColor.r, g: fogColor.g, b: fogColor.b },
+      0,
+      this.smoothFogFar,
+    );
+    this.fishSchool.update(
+      1 / Math.max(frame.fps, 1),
+      frame.player.position,
+      frame.player.velocity,
+      frame.player.forward,
+      performance.now() * 0.001,
+    );
 
     const drawStart = performance.now();
     this.renderer.render(this.scene, this.camera);

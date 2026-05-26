@@ -1,8 +1,16 @@
-import { Vector3 } from 'three';
+import { MathUtils, Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { LeafCell, Mine, Portal } from '../types';
 import { aabbCenter, aabbSize, intersectsAabb } from '../utils/chunk';
 import { SeededRandom } from '../utils/rng';
+
+function mineRadiusForCell(minEdge: number): number {
+  return MathUtils.clamp(
+    minEdge * GAME_CONFIG.mines.radiusCellFraction,
+    GAME_CONFIG.mines.radius,
+    GAME_CONFIG.mines.radiusMax,
+  );
+}
 
 export function placeMines(cells: LeafCell[], portals: Portal[], rng: SeededRandom, chunkKey: string): Mine[] {
   const mines: Mine[] = [];
@@ -24,6 +32,8 @@ export function placeMines(cells: LeafCell[], portals: Portal[], rng: SeededRand
       continue;
     }
 
+    const radius = mineRadiusForCell(minEdge);
+    const scale = radius / GAME_CONFIG.mines.radius;
     const center = aabbCenter(cell.bounds);
     const offset = new Vector3(
       rng.range(-size.x * 0.15, size.x * 0.15),
@@ -36,10 +46,10 @@ export function placeMines(cells: LeafCell[], portals: Portal[], rng: SeededRand
       anchorCellId: cell.id,
       position: center.add(offset),
       velocity: new Vector3(),
-      radius: GAME_CONFIG.mines.radius,
-      triggerRadius: GAME_CONFIG.mines.triggerRadius,
+      radius,
+      triggerRadius: GAME_CONFIG.mines.triggerRadius * scale,
       speed: GAME_CONFIG.mines.launchSpeed,
-      damage: GAME_CONFIG.mines.damage,
+      damage: Math.round(GAME_CONFIG.mines.damage * scale),
       state: 'idle',
       armed: true,
       targetPosition: null,

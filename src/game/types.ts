@@ -117,6 +117,7 @@ export interface Mine {
   armed: boolean;
   targetPosition: Vector3 | null;
   telegraphTimer: number;
+  anchorPosition?: Vector3;
 }
 
 export interface StaticChunkMeshData {

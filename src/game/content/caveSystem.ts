@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { MathUtils, Vector3 } from 'three';
 import type {
   AABB,
   CavePathNode,
@@ -722,20 +722,25 @@ function placeCaveMines(
     if (cell.kind === 'obstacle') continue;
     if (rng.next() > 0.12) continue;
 
-    const center = cell.bounds.min
-      .clone()
-      .add(cell.bounds.max)
-      .multiplyScalar(0.5);
+    const size = cell.bounds.max.clone().sub(cell.bounds.min);
+    const minEdge = Math.min(size.x, size.y, size.z);
+    const radius = MathUtils.clamp(
+      minEdge * GAME_CONFIG.mines.radiusCellFraction,
+      GAME_CONFIG.mines.radius,
+      GAME_CONFIG.mines.radiusMax,
+    );
+    const scale = radius / GAME_CONFIG.mines.radius;
+    const center = cell.bounds.min.clone().add(cell.bounds.max).multiplyScalar(0.5);
     mines.push({
       id: `${cell.id}:mine:${mines.length}`,
       originChunkKey: chunkKeyStr,
       anchorCellId: cell.id,
       position: center,
       velocity: new Vector3(),
-      radius: GAME_CONFIG.mines.radius,
-      triggerRadius: GAME_CONFIG.mines.triggerRadius,
+      radius,
+      triggerRadius: GAME_CONFIG.mines.triggerRadius * scale,
       speed: GAME_CONFIG.mines.launchSpeed,
-      damage: GAME_CONFIG.mines.damage,
+      damage: Math.round(GAME_CONFIG.mines.damage * scale),
       state: 'idle',
       armed: true,
       targetPosition: null,
