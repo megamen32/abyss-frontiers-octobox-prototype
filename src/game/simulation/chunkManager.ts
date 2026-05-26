@@ -5,6 +5,8 @@ import type { AABB, ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapsho
 import { chunkKey, intersectsAabb, worldToChunkCoord } from '../utils/chunk';
 import {
   chunkEvictionRadius,
+  fogVisibilityDistance,
+  getChunkVisibilityBand,
   chunkGenerationRadius,
   getChunkFrustumPriority,
   getChunkOcclusionPenalty,
@@ -62,7 +64,7 @@ export class ChunkManager {
     const forcedCaves = new Map((options.forcedCaves ?? []).map((entry) => [chunkKey(entry.coord), entry]));
 
     // Build the generation set (inner radius) — request missing chunks from workers.
-    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed, options.viewFrustum, this.activeChunks.values())) {
+    for (const coord of prioritizedChunkCoords(currentCoord, radius, forward, speed, options.viewFrustum, this.activeChunks.values(), options.retentionAabb)) {
       const key = chunkKey(coord);
       const forcedEntry = forcedCaves.get(key);
       if (options.caveOnly && !forcedEntry && !detectCaveChunk(this.seed, coord)) {
@@ -121,10 +123,21 @@ export class ChunkManager {
       }
     }
 
+    const noSpawnDist = fogVisibilityDistance() * 0.7;
+    const noSpawnDistSq = noSpawnDist * noSpawnDist;
     const readyQueueStart = performance.now();
     while (this.readyQueue.length > 0) {
       const chunk = this.readyQueue.shift();
       if (!chunk || !keepAlive.has(chunk.key) || this.activeChunks.has(chunk.key)) {
+        continue;
+      }
+      const cx = (chunk.bounds.min.x + chunk.bounds.max.x) * 0.5;
+      const cy = (chunk.bounds.min.y + chunk.bounds.max.y) * 0.5;
+      const cz = (chunk.bounds.min.z + chunk.bounds.max.z) * 0.5;
+      const dx = cx - position.x;
+      const dy = cy - position.y;
+      const dz = cz - position.z;
+      if (dx * dx + dy * dy + dz * dz < noSpawnDistSq) {
         continue;
       }
       this.activeChunks.set(chunk.key, chunk);
@@ -179,6 +192,7 @@ export function prioritizedChunkCoords(
   speed = 0,
   viewFrustum?: ViewFrustumSnapshot,
   blockers?: Iterable<ChunkData>,
+  corridorAabb?: AABB,
 ): ChunkCoord[] {
   const normalizedForward = forward.lengthSq() > 0.0001 ? forward.clone().normalize() : new Vector3(0, 0, 1);
   const predictedChunkOffset = normalizedForward
@@ -208,18 +222,29 @@ export function prioritizedChunkCoords(
         const verticalPenalty = Math.abs(direction.y) * 0.15;
         let frustumScore = 0;
         let occlusionPenalty = 0;
+        let corridorBoost = 0;
         if (viewFrustum) {
           const size = GAME_CONFIG.world.chunkSize;
           const bounds = {
             min: new Vector3(coord.x * size, coord.y * size, coord.z * size),
             max: new Vector3((coord.x + 1) * size, (coord.y + 1) * size, (coord.z + 1) * size),
           };
+          const band = getChunkVisibilityBand(bounds, viewFrustum);
+          if (band === 'outside' && !corridorAabb) {
+            continue;
+          }
+          if (band === 'outside' && corridorAabb && !intersectsAabb(bounds, corridorAabb)) {
+            continue;
+          }
           frustumScore = getChunkFrustumPriority(bounds, viewFrustum) * 4.5;
           occlusionPenalty = blockers ? getChunkOcclusionPenalty(bounds, viewFrustum.position, blockers) : 0;
+          if (corridorAabb && intersectsAabb(bounds, corridorAabb)) {
+            corridorBoost = band === 'inside' ? 1.5 : 3.5;
+          }
         }
         queue.push({
           coord,
-          score: frustumScore + forwardness * 3.2 - distancePenalty - verticalPenalty - predictedDistance * 0.6 - occlusionPenalty,
+          score: frustumScore + corridorBoost + forwardness * 3.2 - distancePenalty - verticalPenalty - predictedDistance * 0.6 - occlusionPenalty,
         });
       }
     }

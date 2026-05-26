@@ -12,8 +12,18 @@ import {
   type Object3D,
   Vector3,
 } from 'three';
+import { patchDither, setFogFade } from './fogDither';
 
 type ObjectFactory<T extends Object3D> = () => T;
+
+function installFadeCallback(mesh: Mesh): void {
+  mesh.onBeforeRender = () => {
+    const fade = mesh.userData.fadeOpacity ?? 1;
+    if (mesh.material instanceof MeshStandardMaterial) {
+      setFogFade(mesh.material, fade);
+    }
+  };
+}
 
 class ObjectPool<T extends Object3D> {
   private readonly available: T[] = [];
@@ -54,34 +64,60 @@ export class RenderPools {
   readonly chestGeometry = new BoxGeometry(1.8, 1.4, 1.2);
   readonly chestMaterial = new MeshStandardMaterial({ color: new Color('#5d8fbc'), roughness: 0.45, metalness: 0.4 });
 
+  constructor() {
+    patchDither(this.sphereObstacleMaterial);
+    patchDither(this.boxObstacleMaterial);
+    patchDither(this.coinMaterial);
+    patchDither(this.chestMaterial);
+  }
+
   readonly sphereObstacle = new ObjectPool<Mesh>(
-    () => new Mesh(this.sphereObstacleGeometry, this.sphereObstacleMaterial),
+    () => {
+      const m = new Mesh(this.sphereObstacleGeometry, this.sphereObstacleMaterial);
+      installFadeCallback(m);
+      return m;
+    },
     24,
   );
 
   readonly boxObstacle = new ObjectPool<Mesh>(
-    () => new Mesh(this.boxObstacleGeometry, this.boxObstacleMaterial),
+    () => {
+      const m = new Mesh(this.boxObstacleGeometry, this.boxObstacleMaterial);
+      installFadeCallback(m);
+      return m;
+    },
     180,
   );
 
   readonly coin = new ObjectPool<Mesh>(
-    () => new Mesh(this.coinGeometry, this.coinMaterial),
+    () => {
+      const m = new Mesh(this.coinGeometry, this.coinMaterial);
+      installFadeCallback(m);
+      return m;
+    },
     40,
   );
 
   readonly chest = new ObjectPool<Mesh>(
-    () => new Mesh(this.chestGeometry, this.chestMaterial),
+    () => {
+      const m = new Mesh(this.chestGeometry, this.chestMaterial);
+      installFadeCallback(m);
+      return m;
+    },
     12,
   );
 
   readonly mine = new ObjectPool<Group>(
     () => {
       const group = new Group();
+      const coreMat = new MeshStandardMaterial({ color: new Color('#ff684f'), emissive: new Color('#622118'), roughness: 0.35, metalness: 0.18 });
+      patchDither(coreMat);
       const core = new Mesh(
         new OctahedronGeometry(1, 1),
-        new MeshStandardMaterial({ color: new Color('#ff684f'), emissive: new Color('#622118'), roughness: 0.35, metalness: 0.18 }),
+        coreMat,
       );
       core.name = 'mine-core';
+      installFadeCallback(core);
       const telegraph = new Line(
         new BufferGeometry().setFromPoints([new Vector3(0, 0, 0), new Vector3(0, 0, 1)]),
         new LineBasicMaterial({ color: new Color('#ffb38a') }),

@@ -2,6 +2,8 @@ import { Box3, Frustum, Matrix4, PerspectiveCamera, Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { AABB, ChunkData } from '../types';
 
+// FogExp uses opacity = exp(-density * dist). Solving for density so opacity = FOG_THRESHOLD at hideDistance:
+// density = -log(FOG_THRESHOLD) / hideDistance
 const FOG_THRESHOLD = 0.03;
 
 export interface ViewFrustumSnapshot {
@@ -14,9 +16,26 @@ export interface ViewFrustumSnapshot {
   far: number;
 }
 
+export type ChunkVisibilityBand = 'inside' | 'fringe' | 'rear' | 'outside';
+
+export function computeChunkFade(bounds: AABB, cameraPosition: Vector3): number {
+  const fogFar = fogVisibilityDistance();
+  const fadeStart = fogFar * 0.55;
+  const box = new Box3(bounds.min.clone(), bounds.max.clone());
+  const distance = box.distanceToPoint(cameraPosition);
+  if (distance <= fadeStart) {
+    return 1;
+  }
+  if (distance >= fogFar) {
+    return 0;
+  }
+  const t = (distance - fadeStart) / (fogFar - fadeStart);
+  return 1 - t * t * (3 - 2 * t);
+}
+
 export function fogDensity(): number {
   const hideDistance = (GAME_CONFIG.visuals.fogRenderRadiusChunks - 0.5) * GAME_CONFIG.world.chunkSize;
-  return Math.sqrt(-Math.log(FOG_THRESHOLD)) / hideDistance;
+  return -Math.log(FOG_THRESHOLD) / hideDistance;
 }
 
 export function fogVisibilityDistance(): number {
@@ -56,10 +75,24 @@ export function isChunkInsideViewFrustum(bounds: AABB, snapshot: ViewFrustumSnap
 }
 
 export function getChunkFrustumPriority(bounds: AABB, snapshot: ViewFrustumSnapshot): number {
+  const band = getChunkVisibilityBand(bounds, snapshot);
+  if (band === 'inside') {
+    return 1;
+  }
+  if (band === 'fringe') {
+    return 0.45;
+  }
+  if (band === 'rear') {
+    return -0.55;
+  }
+  return -1.2;
+}
+
+export function getChunkVisibilityBand(bounds: AABB, snapshot: ViewFrustumSnapshot): ChunkVisibilityBand {
   const frustum = buildFrustumFromSnapshot(snapshot);
   const box = new Box3(bounds.min.clone(), bounds.max.clone());
   if (frustum.intersectsBox(box)) {
-    return 1;
+    return 'inside';
   }
 
   const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
@@ -68,13 +101,13 @@ export function getChunkFrustumPriority(bounds: AABB, snapshot: ViewFrustumSnaps
   const distance = Math.max(1, toCenter.length());
   const forwardness = toCenter.normalize().dot(forward);
   if (forwardness <= -0.2) {
-    return -1;
+    return 'rear';
   }
 
   const halfFov = (snapshot.fov * Math.PI) / 360;
   const angle = Math.acos(Math.max(-1, Math.min(1, forwardness)));
   const margin = Math.max(0.12, GAME_CONFIG.world.chunkSize / distance);
-  return angle <= halfFov * (1 + margin) ? 0.45 : -0.25;
+  return angle <= halfFov * (1 + margin) ? 'fringe' : 'outside';
 }
 
 export function getChunkOcclusionPenalty(

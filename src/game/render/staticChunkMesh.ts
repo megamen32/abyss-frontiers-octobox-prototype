@@ -14,6 +14,7 @@ import {
 } from 'three';
 import type { ChunkData, Face, Obstacle } from '../types';
 import { GAME_CONFIG } from '../config';
+import { createFogDitherMaterial } from './fogDither';
 
 export function createStaticChunkMesh(chunk: ChunkData, material: Material): Mesh | null {
   const data = chunk.staticMeshData;
@@ -25,16 +26,16 @@ export function createStaticChunkMesh(chunk: ChunkData, material: Material): Mes
   geometry.setAttribute('normal', new BufferAttribute(data.normals, 3));
   geometry.setIndex(new BufferAttribute(data.indices, 1));
   geometry.computeBoundingSphere();
-  const mesh = new Mesh(geometry, material);
-  if (chunk.isCaveChunk && mesh.material instanceof MeshStandardMaterial) {
-    const caveMaterial = mesh.material.clone();
-    caveMaterial.color = new Color('#7aa7b8');
-    caveMaterial.emissive = new Color('#18384a');
-    caveMaterial.emissiveIntensity = 0.8;
-    caveMaterial.roughness = 0.52;
-    caveMaterial.metalness = 0.06;
-    mesh.material = caveMaterial;
+  const base = material instanceof MeshStandardMaterial ? material : new MeshStandardMaterial();
+  const chunkMaterial = createFogDitherMaterial(base);
+  if (chunk.isCaveChunk) {
+    chunkMaterial.color = new Color('#7aa7b8');
+    chunkMaterial.emissive = new Color('#18384a');
+    chunkMaterial.emissiveIntensity = 0.8;
+    chunkMaterial.roughness = 0.52;
+    chunkMaterial.metalness = 0.06;
   }
+  const mesh = new Mesh(geometry, chunkMaterial);
   mesh.position.copy(chunk.bounds.min);
   return mesh;
 }

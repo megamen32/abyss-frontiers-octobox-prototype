@@ -7,11 +7,12 @@ import {
   Color,
   DirectionalLight,
   Euler,
-  FogExp2,
+  Fog,
   Group,
   LineSegments,
   MathUtils,
   Mesh,
+  MeshStandardMaterial,
   PerspectiveCamera,
   PlaneGeometry,
   Scene,
@@ -31,12 +32,12 @@ import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
-import { fogChunkRenderRadius, fogDensity, fogVisibilityDistance } from '../utils/visibility';
+import { fogChunkRenderRadius, fogVisibilityDistance, buildFrustumFromSnapshot, fogCullingDistance, computeChunkFade, type ViewFrustumSnapshot } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
 import { updateShipBank } from './shipBank';
 import { computeCameraRig, shipAnchorsToWorld } from './cameraRig';
-import { buildFrustumFromSnapshot, fogCullingDistance, type ViewFrustumSnapshot } from '../utils/visibility';
+import { setFogFade } from './fogDither';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
@@ -55,7 +56,7 @@ type ChunkRenderGroup = {
 
 export class RenderApp {
   readonly hud: Hud;
-  readonly cameraState: CameraState = { yaw: 0, pitch: -0.28, lastManualLookAt: 0 };
+  readonly cameraState: CameraState = { yaw: 0, pitch: 0, lastManualLookAt: 0 };
   private readonly shell = document.createElement('div');
   private readonly viewport = document.createElement('div');
   private readonly scene = new Scene();
@@ -97,7 +98,7 @@ export class RenderApp {
     GAME_CONFIG.world.spawn.y,
     GAME_CONFIG.world.spawn.z + GAME_CONFIG.camera.lookAheadMin,
   );
-  private readonly sceneFog = new FogExp2(new Color(GAME_CONFIG.visuals.fogColor), fogDensity());
+  private readonly sceneFog = new Fog(new Color(GAME_CONFIG.visuals.fogColor), 0, fogVisibilityDistance());
   private readonly ambientLight = new AmbientLight(new Color('#8fb8d2'), GAME_CONFIG.visuals.surfaceAmbientIntensity);
   private readonly fogPlane = this.createFogPlane();
   private readonly skySphere = this.createSkySphere();
@@ -105,6 +106,7 @@ export class RenderApp {
   private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
   private debugUiVisible = false;
   private fogEnabled = true;
+  private smoothFogFar = fogVisibilityDistance();
   private pointerLocked = false;
   /** World-space points (boss, explosion, etc.) that must also be visible. */
   private externalFocusPoints: Vector3[] = [];
@@ -118,7 +120,7 @@ export class RenderApp {
 
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor));
+    this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.fogColor));
     this.viewport.append(this.renderer.domElement);
 
     this.scene.fog = this.sceneFog;
@@ -291,18 +293,43 @@ export class RenderApp {
     const chunkUpdateStart = performance.now();
     let visibleChunks = 0;
     let staticMeshChunks = 0;
+    let maxForwardChunkDist = 0;
+    const playerPos = frame.player.position;
+    const camForward = new Vector3();
+    this.camera.getWorldDirection(camForward);
     for (const chunkRender of this.chunkGroups.values()) {
       const visible = this.shouldRenderChunk(chunkRender, frame.player);
       if (chunkRender.staticMesh) {
         chunkRender.staticMesh.visible = visible;
+        if (visible) {
+          const fade = computeChunkFade(chunkRender.chunk.bounds, playerPos);
+          const mat = chunkRender.staticMesh.material;
+          if (mat instanceof MeshStandardMaterial) {
+            setFogFade(mat, fade);
+          }
+        }
       }
       if (visible) {
         visibleChunks += 1;
         if (chunkRender.staticMesh) {
           staticMeshChunks += 1;
         }
+        const b = chunkRender.chunk.bounds;
+        const cx = (b.min.x + b.max.x) * 0.5;
+        const cy = (b.min.y + b.max.y) * 0.5;
+        const cz = (b.min.z + b.max.z) * 0.5;
+        const dx = cx - playerPos.x;
+        const dy = cy - playerPos.y;
+        const dz = cz - playerPos.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > 1) {
+          const forwardness = (dx * camForward.x + dy * camForward.y + dz * camForward.z) / dist;
+          if (forwardness > 0.1) {
+            maxForwardChunkDist = Math.max(maxForwardChunkDist, dist);
+          }
+        }
       }
-      this.updateChunkMeshes(chunkRender);
+      this.updateChunkMeshes(chunkRender, playerPos);
     }
     renderTimings.renderChunkUpdateMs = performance.now() - chunkUpdateStart;
 
@@ -361,7 +388,7 @@ export class RenderApp {
 
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
 
-    this.updateDepthVisuals(frame.dangerLevel);
+    this.updateDepthVisuals(frame.dangerLevel, maxForwardChunkDist);
 
     const drawStart = performance.now();
     this.renderer.render(this.scene, this.camera);
@@ -401,7 +428,8 @@ export class RenderApp {
     });
   }
 
-  private updateChunkMeshes(chunkRender: ChunkRenderGroup): void {
+  private updateChunkMeshes(chunkRender: ChunkRenderGroup, playerPos: Vector3): void {
+    const fade = chunkRender.staticMesh?.visible ? computeChunkFade(chunkRender.chunk.bounds, playerPos) : 1;
     let pooledIndex = 0;
     const spawnedCount = chunkRender.spawnCursor;
     for (let index = 0; index < spawnedCount; index += 1) {
@@ -411,6 +439,7 @@ export class RenderApp {
       }
       const object = chunkRender.pooled[pooledIndex];
       pooledIndex += 1;
+      object.userData.fadeOpacity = fade;
       if (target.kind === 'obstacle') {
         const mesh = object as Mesh;
         mesh.position.copy(target.data.position);
@@ -814,26 +843,39 @@ export class RenderApp {
     return mesh;
   }
 
-  private updateDepthVisuals(dangerLevel: number): void {
+  private updateDepthVisuals(dangerLevel: number, maxForwardChunkDist: number): void {
     const d = dangerLevel;
-    this.sceneFog.color.set(new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d));
-    this.renderer.setClearColor(new Color(GAME_CONFIG.visuals.skyColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyColor), d));
+    const fogColor = new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d);
+    const skyTopColor = new Color(GAME_CONFIG.visuals.skyTopColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyTopColor), d);
+
+    const configFogFar = fogVisibilityDistance();
+    const minFogFar = GAME_CONFIG.world.chunkSize * 1.5;
+    const chunkSize = GAME_CONFIG.world.chunkSize;
+    const targetFogFar = maxForwardChunkDist > 0
+      ? Math.min(configFogFar, maxForwardChunkDist + chunkSize * 0.75)
+      : minFogFar;
+    const clampedFogFar = Math.max(minFogFar, targetFogFar);
+    const blendSpeed = 3.5;
+    const dt = 1 / 60;
+    this.smoothFogFar += (clampedFogFar - this.smoothFogFar) * (1 - Math.exp(-blendSpeed * dt));
+
+    this.sceneFog.color.copy(fogColor);
+    (this.sceneFog as Fog).near = 0;
+    (this.sceneFog as Fog).far = this.smoothFogFar;
+    this.renderer.setClearColor(fogColor);
+
     this.ambientLight.intensity = GAME_CONFIG.visuals.surfaceAmbientIntensity
       + (GAME_CONFIG.visuals.abyssAmbientIntensity - GAME_CONFIG.visuals.surfaceAmbientIntensity) * d;
+
     const skyMat = this.skySphere.material as ShaderMaterial;
-    (skyMat.uniforms.colorTop.value as Color).copy(
-      new Color(GAME_CONFIG.visuals.skyColor).lerp(new Color(GAME_CONFIG.visuals.abyssSkyColor), d),
-    );
-    (skyMat.uniforms.colorBottom.value as Color).copy(
-      new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d),
-    );
+    (skyMat.uniforms.colorTop.value as Color).copy(skyTopColor);
+    (skyMat.uniforms.colorBottom.value as Color).copy(fogColor);
+
     const fogPlaneMat = this.fogPlane.material as ShaderMaterial;
     (fogPlaneMat.uniforms.colorCenter.value as Color).copy(
-      new Color(GAME_CONFIG.visuals.fogPlaneColor).lerp(new Color(GAME_CONFIG.visuals.fogColor), d * 0.75),
+      new Color(GAME_CONFIG.visuals.fogPlaneColor).lerp(fogColor, d * 0.75),
     );
-    (fogPlaneMat.uniforms.colorEdge.value as Color).copy(
-      new Color(GAME_CONFIG.visuals.fogColor).lerp(new Color(GAME_CONFIG.visuals.abyssFogColor), d),
-    );
+    (fogPlaneMat.uniforms.colorEdge.value as Color).copy(fogColor);
     fogPlaneMat.uniforms.opacity.value = GAME_CONFIG.visuals.fogPlaneOpacity * (1 - d * 0.55);
   }
 
@@ -841,7 +883,7 @@ export class RenderApp {
     const geo = new SphereGeometry(9000, 8, 6);
     const mat = new ShaderMaterial({
       uniforms: {
-        colorTop: { value: new Color(GAME_CONFIG.visuals.skyColor) },
+        colorTop: { value: new Color(GAME_CONFIG.visuals.skyTopColor) },
         colorBottom: { value: new Color(GAME_CONFIG.visuals.fogColor) },
       },
       vertexShader: `
@@ -856,7 +898,7 @@ export class RenderApp {
         uniform vec3 colorBottom;
         varying float vY;
         void main() {
-          float t = smoothstep(-0.4, 0.5, vY);
+          float t = smoothstep(-0.05, 0.65, vY);
           gl_FragColor = vec4(mix(colorBottom, colorTop, t), 1.0);
         }
       `,
