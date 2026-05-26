@@ -94,7 +94,7 @@ export const GAME_CONFIG = {
     pitchMax: 1.2,
     // How many seconds of travel the lookAt target is placed ahead of the ship. Scales with ship
     // speed so at high speed the view opens up further ahead. lookAheadDist = max(lookAheadMin, speed * lookAheadSeconds).
-    lookAheadSeconds: 0.0,
+    lookAheadSeconds: 0.2,
     // Minimum look-ahead distance (units) used when the ship is slow or stationary.
     lookAheadMin: 3,
     // Safety margin as a fraction of the half-FOV. Points must stay this far from screen edges.
@@ -125,7 +125,7 @@ export const GAME_CONFIG = {
     evictionRadiusPadding: 1,
     // How many seconds ahead (at current speed) the system pre-generates chunks along the travel
     // direction. Converted to chunk offsets each frame.
-    generationLookaheadSeconds: 4,
+    generationLookaheadSeconds: 20,
     // Starting chunk spawn budget — how many chunks can be spawned per frame on the first frame.
     spawnBudgetInitial: 10,
     // Floor for the adaptive spawn budget. The system will never drop below this many chunks/frame
@@ -161,7 +161,7 @@ export const GAME_CONFIG = {
     // Depth (units) of the portal tunnel geometry rendered on each face.
     portalThickness: 2,
     // Number of axis-aligned divisions used when splitting dense octobox cells. 3 = 27 children.
-    denseSplitDivisions: 2,
+    denseSplitDivisions: 3,
     // Number of axis-aligned divisions used when splitting sparse / low-density octobox cells.
     // 2 = 8 children (classic octree split).
     sparseSplitDivisions: 2,
@@ -176,7 +176,7 @@ export const GAME_CONFIG = {
     octoboxMinCellSizeMultiplier: 1.15,
     // Maximum allowed leaf cell size as a multiple of the portal radius. Very large cells are
     // considered "open space" and aren't forced to split.
-    octoboxMaxCellSizeMultiplier: 20,
+    octoboxMaxCellSizeMultiplier: 64,
     // Density value below which a cell is treated as effectively empty and splitting stops.
     // Prevents unnecessary subdivision of open-space areas.
     octoboxEmptyDensityThreshold: 0.12,
@@ -219,10 +219,10 @@ export const GAME_CONFIG = {
     separationDistance: 0.35,
     // Velocity multiplier applied in the normal direction after an obstacle collision. Values > 1
     // make the ship bounce away faster than it arrived (energetic rebound).
-    obstacleReboundFactor: 1.1,
+    obstacleReboundFactor: 0.6,
     // Minimum rebound speed (units/s) after hitting an obstacle. Ensures the ship is always pushed
     // away even when impact speed is very low.
-    obstacleReboundMinSpeed: 8,
+    obstacleReboundMinSpeed: 2,
     // Fraction [0–1] of velocity tangential to the obstacle surface that is retained after impact.
     // Lower values = more friction / speed scrubbing on grazes.
     obstacleTangentialDamping: 0.42,
@@ -250,7 +250,7 @@ export const GAME_CONFIG = {
     leadTime: 0.7,
     // Duration (seconds) of the telegraph animation shown before the mine launches. Gives the
     // player a visual warning to dodge.
-    telegraphDuration: 0.5,
+    telegraphDuration: 1.3,
     // Physical radius of the mine (units). Used for collision detection with the player and obstacles.
     radius: 1.2,
     // HP damage dealt when the mine hits the ship.
@@ -259,14 +259,14 @@ export const GAME_CONFIG = {
     deepMineDepth: 500,
     // Continuous acceleration (units/s²) during rocket homing phase. The mine accelerates
     // toward a predicted intercept point each frame instead of setting velocity instantly.
-    rocketAcceleration: 5,
+    rocketAcceleration: 0.5,
     // Maximum speed cap during rocket phase (units/s). Prevents the homing speed from
     // growing unbounded over long approach distances.
-    rocketMaxSpeed: 35,
+    rocketMaxSpeed: 19,
     // Distance (units) from the player at which the rocket phase ends and the final
     // launched burst begins. At this point the mine inherits its rocket velocity and
     // adds an aimed burst toward the player.
-    rocketToLaunchedDistance: 6,
+    rocketToLaunchedDistance: 128,
   },
 
   cave: {
@@ -328,12 +328,13 @@ export const GAME_CONFIG = {
     // is computed from it so generation pop-in is always hidden.
     // fogDensity = sqrt(-log(0.03)) / ((fogRenderRadiusChunks - 0.5) * chunkSize)
     fogRenderRadiusChunks: 1,
-    // Sky and fog color near the surface (dangerLevel = 0).
-    skyColor: 0x03111a,
+    // The ONE color that clearColor, FogExp, and sky sphere bottom all use.
+    // Sky sphere top can be slightly different to give a gradient, but must stay close.
     fogColor: 0x02070c,
-    // Sky and fog color deep in the abyss (dangerLevel = 1). Lerped from surface colors.
-    abyssSkyColor: 0x000205,
     abyssFogColor: 0x000102,
+    // Sky sphere top color — slightly lighter than fog, gives the gradient above horizon.
+    skyTopColor: 0x071828,
+    abyssSkyTopColor: 0x020810,
     // Ambient light intensity at the surface (bright, light from above).
     surfaceAmbientIntensity: 1.6,
     // Ambient light intensity at full abyss depth (dim, oppressive darkness).
@@ -341,6 +342,6 @@ export const GAME_CONFIG = {
     // Color and opacity of the bright fog plane near the surface. This is a soft light veil,
     // not a hard water sheet.
     fogPlaneColor: 0x6fc9ff,
-    fogPlaneOpacity: 0.3,
+    fogPlaneOpacity: 0.9,
   },
 } as const;

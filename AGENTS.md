@@ -31,6 +31,10 @@ Single-page app. No routing, no SSR. `src/main.ts` → `Game` → game loop (sim
 | `src/game/types.ts` | All shared types (ChunkData, Obstacle, Portal, etc.) |
 | `src/game/config.ts` | Single `GAME_CONFIG` object — all tunables live here |
 
+### Coordinate Convention
+
+`+Y` = up, `+X` = right, `+Z` = forward/nose.
+
 ### Chunk generation pipeline (in `content/`)
 
 Two generation modes selected at runtime:

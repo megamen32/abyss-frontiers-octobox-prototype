@@ -1,5 +1,6 @@
 import type { ChunkCoord, DebugTimingSnapshot } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
+import type { BoidsDebugStats } from '../../boids/BoidsTypes';
 
 interface HudSnapshot {
   hp: number;
@@ -25,6 +26,7 @@ interface HudSnapshot {
   timings: DebugTimingSnapshot;
   dead: boolean;
   paused: boolean;
+  boidsDebug?: BoidsDebugStats;
 }
 
 export class Hud {
@@ -42,6 +44,7 @@ export class Hud {
   private readonly debugContent = document.createElement('div');
   private readonly debugTimings = document.createElement('div');
   private readonly debugTuning = document.createElement('div');
+  private readonly debugBoids = document.createElement('div');
   private readonly keyHints = document.createElement('div');
 
   private readonly restartButton = document.createElement('button');
@@ -104,7 +107,8 @@ export class Hud {
     this.debugContent.className = 'debug-content';
     this.debugTimings.className = 'debug-line';
     this.debugTuning.className = 'debug-line';
-    this.debugPanel.append(this.debugContent, this.debugTimings, this.debugTuning);
+    this.debugBoids.className = 'debug-line';
+    this.debugPanel.append(this.debugContent, this.debugTimings, this.debugTuning, this.debugBoids);
 
     this.keyHints.className = 'key-hints';
     this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause';
@@ -195,6 +199,17 @@ export class Hud {
         `turn ${s.tuning.turnInputSpeed.toFixed(2)}  ` +
         `octo ${s.timings.workerOctoboxMs.toFixed(1)}  ` +
         `mesh ${s.timings.workerStaticMeshMs.toFixed(1)}`;
+      if (s.boidsDebug) {
+        const bd = s.boidsDebug;
+        this.debugBoids.textContent =
+          `boids ${bd.boidCount}/${bd.activeBoidCount}  ` +
+          `${bd.gpuMode ? 'GPU' : 'CPU'}  ` +
+          `cells ${bd.activeCells}  ` +
+          `overflow ${bd.gridOverflow}  ` +
+          `avg/cell ${bd.avgBoidsPerCell}  ` +
+          `sim ${bd.simulationMs.toFixed(1)}  ` +
+          `render ${bd.renderMs.toFixed(1)}`;
+      }
     }
 
     const deathStats = this.deathOverlay.querySelector('.death-stats');

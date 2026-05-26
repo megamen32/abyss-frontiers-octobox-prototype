@@ -15,6 +15,7 @@ import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
+import { BoidsSystem } from '../../boids/BoidsSystem';
 
 export class Game {
   private readonly input = new InputController(window);
@@ -38,6 +39,7 @@ export class Game {
   private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
+  private readonly boids = new BoidsSystem();
 
   constructor(root: HTMLElement) {
     this.render = new RenderApp(root);
@@ -47,6 +49,7 @@ export class Game {
     this.render.hud.setCallbacks({
       onRestart: () => this.restart(),
     });
+    this.render.addBoids(this.boids);
   }
 
   start(): void {
@@ -64,9 +67,11 @@ export class Game {
     this.spawnBudget.reset();
     this.chunkManager = new ChunkManager(this.seed);
     this.render.syncChunks([], oldKeys);
+    this.boids.syncChunks([], oldKeys);
     const initial = this.chunkManager.syncAround(this.player.position, travelDirection(this.player), this.player.speed);
     this.currentChunk = initial.currentCoord;
     this.render.syncChunks(initial.added, initial.removed);
+    this.boids.syncChunks(initial.added, initial.removed);
   }
 
   private toggleDebug(): void {
@@ -154,6 +159,7 @@ export class Game {
       );
       this.currentChunk = sync.currentCoord;
       this.render.syncChunks(sync.added, sync.removed);
+      this.boids.syncChunks(sync.added, sync.removed);
       this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
 
       const worldStart = performance.now();
@@ -164,6 +170,7 @@ export class Game {
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const predictor = ShipPredictor.forPlayer(this.player);
+    this.boids.update(dt, this.render.getCameraPosition(), this.player.position);
     const renderStart = performance.now();
     this.render.updateFrame({
       paused: this.paused,

@@ -32,6 +32,7 @@ import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
+import type { BoidsSystem } from '../../boids/BoidsSystem';
 import { fogChunkRenderRadius, fogVisibilityDistance, buildFrustumFromSnapshot, fogCullingDistance, computeChunkFade, type ViewFrustumSnapshot } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
@@ -108,6 +109,7 @@ export class RenderApp {
   private fogEnabled = true;
   private smoothFogFar = fogVisibilityDistance();
   private pointerLocked = false;
+  private boids: BoidsSystem | null = null;
   /** World-space points (boss, explosion, etc.) that must also be visible. */
   private externalFocusPoints: Vector3[] = [];
 
@@ -134,6 +136,15 @@ export class RenderApp {
     this.installInput();
     this.onResize();
     window.addEventListener('resize', this.onResize);
+  }
+
+  addBoids(boids: BoidsSystem): void {
+    this.boids = boids;
+    this.world.add(boids.object3d);
+  }
+
+  getCameraPosition(): Vector3 {
+    return this.camera.position.clone();
   }
 
   dispose(): void {
@@ -389,6 +400,10 @@ export class RenderApp {
     renderTimings.renderHudCameraMs = performance.now() - hudCameraStart;
 
     this.updateDepthVisuals(frame.dangerLevel, maxForwardChunkDist);
+    if (this.boids) {
+      const fogColor = this.sceneFog.color;
+      this.boids.setFog({ r: fogColor.r, g: fogColor.g, b: fogColor.b }, 0, this.smoothFogFar);
+    }
 
     const drawStart = performance.now();
     this.renderer.render(this.scene, this.camera);
@@ -425,6 +440,7 @@ export class RenderApp {
       timings: renderTimings,
       dead: !frame.player.alive,
       paused: frame.paused,
+      boidsDebug: this.boids?.debug,
     });
   }
 
