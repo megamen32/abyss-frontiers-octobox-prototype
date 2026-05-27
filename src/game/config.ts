@@ -50,6 +50,7 @@ export const GAME_CONFIG = {
     hp: 100.0,
     // Seconds of invulnerability granted after taking a hit. Prevents rapid successive damage.
     hitInvulnerabilityTime: 1,
+    brakeDrag: 3.0,
   },
 
   camera: {
@@ -118,7 +119,7 @@ export const GAME_CONFIG = {
     simulationRadius: 1,
     // Extra chunk radius added on top of simulationRadius for background pre-generation. Chunks in
     // this band are generated but not yet active, reducing pop-in.
-    preloadRadiusPadding: 2,
+    preloadRadiusPadding: 1,
     // Extra chunk radius beyond generationRadius before a loaded chunk is evicted. Creates a
     // hysteresis buffer so crossing a boundary doesn't immediately remove trailing chunks while
     // leading ones are still being generated.
@@ -240,14 +241,11 @@ export const GAME_CONFIG = {
 
   mines: {
     // Maximum number of mines that can be active simultaneously per chunk.
-    maxPerChunk: 3,
+    maxPerChunk: 30,
     // Distance (units) at which the mine detects the player and enters targeting state.
-    triggerRadius: 15,
+    triggerRadius: 32,
     // Speed (units/s) at which a launched mine travels toward its target.
     launchSpeed: 22,
-    // Seconds of player velocity extrapolation used to predict the intercept point. The mine aims
-    // at player.position + velocity * leadTime at the moment it triggers.
-    leadTime: 0.7,
     // Duration (seconds) of the telegraph animation shown before the mine launches. Gives the
     // player a visual warning to dodge.
     telegraphDuration: 1.3,
@@ -266,7 +264,7 @@ export const GAME_CONFIG = {
     rocketAcceleration: 0.5,
     // Maximum speed cap during rocket phase (units/s). Prevents the homing speed from
     // growing unbounded over long approach distances.
-    rocketMaxSpeed: 19,
+    rocketMaxSpeed: 20,
     // Distance (units) from the player at which the rocket phase ends and the final
     // launched burst begins. At this point the mine inherits its rocket velocity and
     // adds an aimed burst toward the player.
@@ -323,11 +321,27 @@ export const GAME_CONFIG = {
     rimThickness: 0.18,
   },
 
+  gamepad: {
+    leftStickDeadzone: 0.15,
+    rightStickDeadzone: 0.15,
+    triggerThreshold: 0.08,
+    stickYawScale: 1.0,
+    stickPitchScale: 0.8,
+    cameraYawScale: 0.8,
+    vibrationPattern: { strong: 0.3, weak: 0.6, duration: 200 },
+  },
+
   visuals: {
     // Enables the in-game debug overlay (chunk wireframes, collision spheres, fps graph).
     debugEnabled: false,
+    // Fog dither — stochastic screen-space discard that masks pop-in when new chunks/
+    // objects appear before fog can hide them. Disabled by default (noisy look).
+    fogDitherEnabled: false,
+    // Seconds over which dither fade ramps from 0 (fully dithered) to 1 (fully opaque)
+    // after a chunk first becomes visible.
+    fogDitherPopInDuration: 0.5,
     // How many chunks around the player are rendered in the chunk debug overlay (0 = current only).
-    debugChunkRadius: 0,
+    debugChunkRadius: 1,
     // How many chunks of visibility the fog allows. This is the PRIMARY fog parameter — density
     // is computed from it so generation pop-in is always hidden.
     // fogDensity = sqrt(-log(0.03)) / ((fogRenderRadiusChunks - 0.5) * chunkSize)

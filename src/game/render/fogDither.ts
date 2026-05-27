@@ -1,4 +1,5 @@
 import { MeshStandardMaterial, type IUniform } from 'three';
+import { GAME_CONFIG } from '../config';
 
 const DITHER_UNIFORM = /* glsl */ `
 uniform float fogFade;
@@ -13,11 +14,12 @@ const DITHER_LOGIC = /* glsl */ `
 
 export function createFogDitherMaterial(base: MeshStandardMaterial): MeshStandardMaterial {
   const mat = base.clone();
-  patchDither(mat);
+  if (GAME_CONFIG.visuals.fogDitherEnabled) patchDither(mat);
   return mat;
 }
 
 export function setFogFade(material: MeshStandardMaterial, fade: number): void {
+  if (!GAME_CONFIG.visuals.fogDitherEnabled) return;
   material.userData.fogFade = fade;
   const handle = material.userData.fogFadeUniform;
   if (handle) {

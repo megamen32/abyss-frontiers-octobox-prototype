@@ -32,9 +32,9 @@ import { orientationFromLook, travelDirection } from '../simulation/player';
 import type { ChunkCoord } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { ShipPredictor } from '../simulation/shipPredictor';
+import { SAMPLE_TIMES } from '../simulation/shipPredictor';
 import type { BoidsSystem } from '../../boids/BoidsSystem';
-import { FishSchool, DEFAULT_FISH_SCHOOL_CONFIG } from './FishSchool';
-import { fogChunkRenderRadius, fogVisibilityDistance, buildFrustumFromSnapshot, fogCullingDistance, computeChunkFade, type ViewFrustumSnapshot } from '../utils/visibility';
+import { fogChunkRenderRadius, fogVisibilityDistance, buildFrustumFromSnapshot, fogCullingDistance, type ViewFrustumSnapshot } from '../utils/visibility';
 import { PerformanceCapture } from '../diagnostics/performanceCapture';
 import { createBlackHoleEntrance, createStaticChunkMesh, isRepresentedByStaticChunkMesh } from './staticChunkMesh';
 import { updateShipBank } from './shipBank';
@@ -54,6 +54,7 @@ type ChunkRenderGroup = {
   blackHoleMesh: Group | null;
   coord: ChunkCoord;
   spawnCursor: number;
+  becameVisibleAt: number;
 };
 
 export class RenderApp {
@@ -84,6 +85,7 @@ export class RenderApp {
   private readonly debugVelocityRay = this.debugRenderer.createDebugRay('#00e5ff');
   private readonly debugCameraRay = this.debugRenderer.createDebugRay('#ffe600');
   private readonly debugMineSegs: LineSegments = this.debugRenderer.createDebugSegments('#ff4444', 32);
+  private readonly debugPredictorSegs: LineSegments = this.debugRenderer.createDebugSegments('#7dfcff', SAMPLE_TIMES.length);
   private prevYaw = 0;
   private prevPitch = -0.28;
   private shipBank = 0;
@@ -111,7 +113,6 @@ export class RenderApp {
   private smoothFogFar = fogVisibilityDistance();
   private pointerLocked = false;
   private boids: BoidsSystem | null = null;
-  private readonly fishSchool = new FishSchool(DEFAULT_FISH_SCHOOL_CONFIG);
   /** World-space points (boss, explosion, etc.) that must also be visible. */
   private externalFocusPoints: Vector3[] = [];
 
@@ -134,8 +135,7 @@ export class RenderApp {
     this.setupLights();
     this.setupPlayerMesh();
     this.world.add(this.visibleRadiusHelper, this.interactiveRadiusHelper, this.simulationRadiusHelper);
-    this.world.add(this.debugVelocityRay, this.debugCameraRay, this.debugMineSegs);
-    this.world.add(this.fishSchool.object3d);
+    this.world.add(this.debugVelocityRay, this.debugCameraRay, this.debugMineSegs, this.debugPredictorSegs);
     this.installInput();
     this.onResize();
     window.addEventListener('resize', this.onResize);
@@ -160,7 +160,6 @@ export class RenderApp {
       }
     }
     this.chunkGroups.clear();
-    this.fishSchool.dispose();
     this.renderer.dispose();
   }
 
@@ -192,6 +191,13 @@ export class RenderApp {
   setFogEnabled(enabled: boolean): void {
     this.fogEnabled = enabled;
     this.scene.fog = enabled ? this.sceneFog : null;
+  }
+
+  applyGamepadCameraYaw(delta: number): void {
+    this.cameraState.yaw += delta;
+    if (Math.abs(delta) > 0.001) {
+      this.cameraState.lastManualLookAt = performance.now() * 0.001;
+    }
   }
 
   getViewFrustumSnapshot(): ViewFrustumSnapshot {
@@ -249,6 +255,7 @@ export class RenderApp {
         blackHoleMesh: blackHole,
         coord: chunk.coord,
         spawnCursor: 0,
+        becameVisibleAt: 0,
       });
     }
   }
@@ -271,6 +278,7 @@ export class RenderApp {
     spawnBudget: number;
     averageFps: number;
     timings: DebugTimingSnapshot;
+    autopilot: boolean;
   }): void {
     const renderTimings: DebugTimingSnapshot = { ...frame.timings };
     const renderStart = performance.now();
@@ -310,21 +318,20 @@ export class RenderApp {
     let staticMeshChunks = 0;
     let maxForwardChunkDist = 0;
     const playerPos = frame.player.position;
+    const mineTime = performance.now() * 0.001;
+    const nowMs = performance.now();
     const camForward = new Vector3();
     this.camera.getWorldDirection(camForward);
+    const ditherPopIn = GAME_CONFIG.visuals.fogDitherEnabled ? GAME_CONFIG.visuals.fogDitherPopInDuration : 0;
     for (const chunkRender of this.chunkGroups.values()) {
       const visible = this.shouldRenderChunk(chunkRender, frame.player);
       if (chunkRender.staticMesh) {
         chunkRender.staticMesh.visible = visible;
-        if (visible) {
-          const fade = computeChunkFade(chunkRender.chunk.bounds, playerPos);
-          const mat = chunkRender.staticMesh.material;
-          if (mat instanceof MeshStandardMaterial) {
-            setFogFade(mat, fade);
-          }
-        }
       }
       if (visible) {
+        if (chunkRender.becameVisibleAt === 0) {
+          chunkRender.becameVisibleAt = nowMs;
+        }
         visibleChunks += 1;
         if (chunkRender.staticMesh) {
           staticMeshChunks += 1;
@@ -343,8 +350,10 @@ export class RenderApp {
             maxForwardChunkDist = Math.max(maxForwardChunkDist, dist);
           }
         }
+      } else {
+        chunkRender.becameVisibleAt = 0;
       }
-      this.updateChunkMeshes(chunkRender, playerPos);
+      this.updateChunkMeshes(chunkRender, playerPos, mineTime, nowMs, ditherPopIn);
     }
     renderTimings.renderChunkUpdateMs = performance.now() - chunkUpdateStart;
 
@@ -405,21 +414,16 @@ export class RenderApp {
 
     this.updateDepthVisuals(frame.dangerLevel, maxForwardChunkDist);
     const fogColor = this.sceneFog.color;
+    const fogRgb = { r: fogColor.r, g: fogColor.g, b: fogColor.b };
     if (this.boids) {
-      this.boids.setFog({ r: fogColor.r, g: fogColor.g, b: fogColor.b }, 0, this.smoothFogFar);
+      this.boids.setFog(fogRgb, 0, this.smoothFogFar);
     }
-    this.fishSchool.setFog(
-      { r: fogColor.r, g: fogColor.g, b: fogColor.b },
-      0,
-      this.smoothFogFar,
-    );
-    this.fishSchool.update(
-      1 / Math.max(frame.fps, 1),
-      frame.player.position,
-      frame.player.velocity,
-      frame.player.forward,
-      performance.now() * 0.001,
-    );
+    this.pools.mineCoreMaterial.uniforms.uFogColor.value.copy(fogColor);
+    this.pools.mineCoreMaterial.uniforms.uFogNear.value = 0;
+    this.pools.mineCoreMaterial.uniforms.uFogFar.value = this.smoothFogFar;
+    this.pools.mineSpikeMaterial.uniforms.uFogColor.value.copy(fogColor);
+    this.pools.mineSpikeMaterial.uniforms.uFogNear.value = 0;
+    this.pools.mineSpikeMaterial.uniforms.uFogFar.value = this.smoothFogFar;
 
     const drawStart = performance.now();
     this.renderer.render(this.scene, this.camera);
@@ -456,12 +460,24 @@ export class RenderApp {
       timings: renderTimings,
       dead: !frame.player.alive,
       paused: frame.paused,
+      autopilot: frame.autopilot,
       boidsDebug: this.boids?.debug,
     });
   }
 
-  private updateChunkMeshes(chunkRender: ChunkRenderGroup, playerPos: Vector3): void {
-    const fade = chunkRender.staticMesh?.visible ? computeChunkFade(chunkRender.chunk.bounds, playerPos) : 1;
+  private updateChunkMeshes(chunkRender: ChunkRenderGroup, playerPos: Vector3, time: number, nowMs: number, ditherPopIn: number): void {
+    let fade = 1;
+    if (ditherPopIn > 0) {
+      const elapsed = (nowMs - chunkRender.becameVisibleAt) * 0.001;
+      fade = Math.min(1, elapsed / ditherPopIn);
+      fade = fade * fade * (3 - 2 * fade);
+    }
+    if (chunkRender.staticMesh && chunkRender.staticMesh.visible) {
+      const mat = chunkRender.staticMesh.material;
+      if (mat instanceof MeshStandardMaterial) {
+        setFogFade(mat, fade);
+      }
+    }
     let pooledIndex = 0;
     const spawnedCount = chunkRender.spawnCursor;
     for (let index = 0; index < spawnedCount; index += 1) {
@@ -502,17 +518,33 @@ export class RenderApp {
       if (!mesh.visible) {
         continue;
       }
-      mesh.rotation.x += 0.04;
-      mesh.rotation.y += 0.06;
-      mesh.rotation.z += 0.02;
+      const speed = target.data.velocity.length();
+      const spin = target.data.state === 'idle' ? 0.004
+        : target.data.state === 'targeting' ? 0.012
+        : target.data.state === 'rocket' ? 0.028
+        : 0.02;
+      const speedSpin = Math.min(speed * 0.0025, 0.025);
+      mesh.rotation.x += spin * 0.8 + speedSpin * 0.4;
+      mesh.rotation.y += spin * 1.0 + speedSpin * 0.9;
+      mesh.rotation.z += spin * 0.45 + speedSpin * 0.25;
 
-      const core = mesh.getObjectByName('mine-core') as Mesh | undefined;
       const telegraph = mesh.getObjectByName('mine-telegraph') as Line | undefined;
-      const scale = target.data.state === 'idle' ? 1
-        : target.data.state === 'targeting' ? 1.08
-        : target.data.state === 'rocket' ? 1.12
-        : 1.18;
-      core?.scale.setScalar(target.data.radius * scale);
+      const proximity = MathUtils.clamp(1 - playerPos.distanceTo(target.data.position) / Math.max(target.data.triggerRadius * 4, 1), 0, 1);
+      const danger = proximity;
+      const core = mesh.getObjectByName('mine-core') as Mesh | undefined;
+      const spikes = mesh.getObjectByName('mine-spikes') as Mesh | undefined;
+      if (core) {
+        core.scale.setScalar(target.data.radius);
+        core.userData.mineDanger = danger;
+        core.userData.mineTime = time;
+        core.userData.fadeOpacity = fade;
+      }
+      if (spikes) {
+        spikes.scale.setScalar(target.data.radius);
+        spikes.userData.mineDanger = danger;
+        spikes.userData.mineTime = time;
+        spikes.userData.fadeOpacity = fade;
+      }
 
       if (telegraph) {
         telegraph.visible = (target.data.state === 'targeting' && target.data.targetPosition !== null)
@@ -696,6 +728,18 @@ export class RenderApp {
     group.rotation.set(0, 0, 0);
     const core = group.getObjectByName('mine-core') as Mesh | undefined;
     core?.scale.setScalar(mine.radius);
+    if (core) {
+      core.userData.mineDanger = 0;
+      core.userData.mineTime = 0;
+      core.userData.fadeOpacity = 1;
+    }
+    const spikes = group.getObjectByName('mine-spikes') as Mesh | undefined;
+    spikes?.scale.setScalar(mine.radius);
+    if (spikes) {
+      spikes.userData.mineDanger = 0;
+      spikes.userData.mineTime = 0;
+      spikes.userData.fadeOpacity = 1;
+    }
     const telegraph = group.getObjectByName('mine-telegraph') as Line | undefined;
     if (telegraph) {
       telegraph.visible = false;
@@ -739,10 +783,18 @@ export class RenderApp {
     this.debugVelocityRay.visible = this.debugEnabled;
     this.debugCameraRay.visible = this.debugEnabled;
     this.debugMineSegs.visible = this.debugEnabled;
+    this.debugPredictorSegs.visible = this.debugEnabled;
 
     if (!this.debugEnabled) {
       return;
     }
+
+    const samplePairs: Array<[Vector3, Vector3]> = [];
+    const samplePoints = SAMPLE_TIMES.map((time) => predictor.predict(time));
+    for (let index = 0; index < samplePoints.length; index += 1) {
+      samplePairs.push([samplePoints[index], samplePoints[(index + 1) % samplePoints.length]]);
+    }
+    this.debugRenderer.updateDebugSegments(this.debugPredictorSegs, samplePairs);
 
     // Cyan: ship position → physics-predicted position in 1 second (accounts for drag + thrust).
     const predicted = predictor.predict(1.0);
