@@ -2,17 +2,65 @@ import type { Vector3 } from 'three'
 
 export type BoidVisualType = 'fish' | 'drone' | 'plankton' | 'triangle'
 
+export interface BoidsFollowPredictor {
+  predict(t: number): Vector3
+}
+
+/** Per-type soft attractor ahead of the ship.
+ *  Each boid oscillates its personal target distance between
+ *  [minSeconds * shipSpeed … maxSeconds * shipSpeed] using its seed as phase.
+ *  period controls how slowly the boid drifts between near and far.
+ *  weight is how strongly the attractor pulls relative to flocking forces.
+ *  Set weight = 0 to disable (ambient fish that ignore the ship direction).
+ */
+export interface FollowTargetConfig {
+  minSeconds: number   // closest target distance expressed as travel-seconds
+  maxSeconds: number   // farthest target distance
+  period: number       // oscillation period in seconds
+  spread: number       // lateral spread radius around the target point
+  weight: number       // force weight (0 = disabled)
+}
+
+/** Pairwise interaction weights from one boid type toward another.
+ *  This is the cheap ABZU-style control surface: one shared neighbor query,
+ *  then different responses per type pair.
+ */
+export interface BoidTypeInteraction {
+  separation: number
+  alignment: number
+  cohesion: number
+  pursuit: number
+  flee: number
+  ignore: boolean
+}
+
 export interface BoidTypeConfig {
   typeId: number
   name: string
+  targetCount: number
+  // movement
   maxSpeed: number
   minSpeed: number
+  maxForce: number
+  turnRate: number
+  // perception
   perceptionRadius: number
   separationRadius: number
+  // flocking weights
   separationWeight: number
   alignmentWeight: number
   cohesionWeight: number
+  wallAvoidanceWeight: number
+  flowWeight: number
+  playerAvoidanceWeight: number
+  avoidPlayerRadius: number
+  // optional soft attractor ahead of the ship (null = no follow)
+  followTarget: FollowTargetConfig | null
+  // visual
   scale: number
+  color: number
+  emissiveStrength: number
+  scaleVariation: number
 }
 
 export interface BoidLODConfig {
@@ -64,6 +112,7 @@ export interface BoidsConfig {
   lod: BoidLODConfig
   fallback: BoidFallbackConfig
   boidTypes: BoidTypeConfig[]
+  interactions: BoidTypeInteraction[][]
 }
 
 export enum BoidFlags {
@@ -72,6 +121,15 @@ export enum BoidFlags {
   DESPAWNING = 2,
   SLEEPING = 3,
   DEAD = 4,
+  KINEMATIC = 5,
+}
+
+export enum BoidBehavior {
+  NONE = 0,
+  IDLE = 1,
+  TARGETING = 2,
+  ROCKET = 3,
+  LAUNCHED = 4,
 }
 
 export interface BoidState {
@@ -79,6 +137,8 @@ export interface BoidState {
   velocity: [number, number, number]
   seed: number
   typeId: number
+  behavior: BoidBehavior
+  stateTimer: number
   life: number
   cellId: number
   flags: BoidFlags

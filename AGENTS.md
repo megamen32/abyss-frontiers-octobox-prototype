@@ -20,6 +20,15 @@ make restart           # stop → build → start
 
 Single-page app. No routing, no SSR. `src/main.ts` → `Game` → game loop (simulate → sync chunks → render).
 
+### Boids Priority
+
+- Build **one** shared boids system, not separate fish/mine/school systems.
+- All flocking-style agents should go through shared boids infrastructure: multi-type configs + pairwise interaction matrix.
+- Prefer a unified architecture for `fish`, `companionFish`, `mines`, future `sharks`, etc.
+- This machine has a real GPU available: **Apple M1 Max, Metal 4**.
+- On this machine, prefer the GPU/WebGPU boids path as the primary implementation.
+- Do **not** spend time building or prioritizing a CPU-first/fallback boids path unless explicitly requested.
+
 ### Key directories
 
 | Path | Role |

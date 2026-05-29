@@ -1,4 +1,5 @@
 import type { BoidsConfig, BoidState } from './BoidsTypes'
+import { GAME_CONFIG } from '../game/config'
 
 export interface BoidsGPUResources {
   device: GPUDevice
@@ -20,10 +21,12 @@ export interface BoidsGPUResources {
   bindGroupB: GPUBindGroup
   readbackStaging: GPUBuffer
   overflowStaging: GPUBuffer
+  readbackPending: boolean
+  overflowPending: boolean
 }
 
-const BOID_STRUCT_SIZE = 48
-const UNIFORM_SIZE = 128
+const BOID_STRUCT_SIZE = 64
+const UNIFORM_SIZE = 256
 
 export async function initGPUResources(config: BoidsConfig): Promise<BoidsGPUResources | null> {
   if (!navigator.gpu) return null
@@ -167,20 +170,22 @@ export async function initGPUResources(config: BoidsConfig): Promise<BoidsGPURes
     bindGroupB,
     readbackStaging: readbackBuffer,
     overflowStaging,
+    readbackPending: false,
+    overflowPending: false,
   }
 }
 
 const BOIDS_CLEAR_WGSL = `
-@group(0) @binding(0) var<storage, read_write> cellCounts: array<u32>;
-@group(0) @binding(1) var<storage, read_write> overflow: array<u32>;
+@group(0) @binding(0) var<storage, read_write> cellCounts: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read_write> overflow: array<atomic<u32>>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x < arrayLength(&cellCounts)) {
-    cellCounts[id.x] = 0u;
+    atomicStore(&cellCounts[id.x], 0u);
   }
   if (id.x == 0u) {
-    overflow[0] = 0u;
+    atomicStore(&overflow[0], 0u);
   }
 }
 `
@@ -190,6 +195,7 @@ struct Boid {
   position: vec4<f32>,
   velocity: vec4<f32>,
   state: vec4<f32>,
+  extra: vec4<f32>,
 };
 
 struct WorldCell {
@@ -230,17 +236,32 @@ struct Uniforms {
   playerPosY: f32,
   playerPosZ: f32,
   time: f32,
+  playerVelX: f32,
+  playerVelY: f32,
+  playerVelZ: f32,
+  playerFwdX: f32,
+  playerFwdY: f32,
+  playerFwdZ: f32,
+  followMinSeconds: f32,
+  followMaxSeconds: f32,
+  followPeriod: f32,
+  followSpread: f32,
+  followWeight: f32,
   cellMetadataCount: u32,
+  mineTelegraphDuration: f32,
+  mineTargetingMaxSpeed: f32,
+  mineTargetingAccel: f32,
+  mineRocketAccel: f32,
+  mineRocketMaxSpeed: f32,
+  mineLaunchSpeed: f32,
   pad1: u32,
-  pad2: u32,
-  pad3: u32,
 };
 
 @group(0) @binding(0) var<storage, read> boidsIn: array<Boid>;
 @group(0) @binding(1) var<storage, read_write> boidsOut: array<Boid>;
-@group(0) @binding(2) var<storage, read_write> cellCounts: array<u32>;
+@group(0) @binding(2) var<storage, read_write> cellCounts: array<atomic<u32>>;
 @group(0) @binding(3) var<storage, read_write> cellBoidIndices: array<u32>;
-@group(0) @binding(4) var<storage, read_write> overflow: array<u32>;
+@group(0) @binding(4) var<storage, read_write> overflow: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read> cellMetadata: array<WorldCell>;
 @group(0) @binding(6) var<storage, read> cellNeighborRanges: array<CellNeighborRange>;
 @group(0) @binding(7) var<storage, read> cellNeighborIds: array<u32>;
@@ -251,6 +272,69 @@ fn hash11(p: f32) -> f32 {
   h *= h + 33.33;
   h *= h + h;
   return fract(h);
+}
+
+fn followTargetForce(pos: vec3<f32>, seed: f32, age: f32) -> vec3<f32> {
+  if (uniforms.followWeight <= 0.0 || uniforms.followPeriod <= 0.001) {
+    return vec3<f32>(0.0, 0.0, 0.0);
+  }
+  let phase = (seed * 0.01 + age / uniforms.followPeriod) * 6.28318530718;
+  let t = (sin(phase) + 1.0) * 0.5;
+  let aheadSeconds = uniforms.followMinSeconds + t * (uniforms.followMaxSeconds - uniforms.followMinSeconds);
+  let playerSpeed = length(vec3<f32>(uniforms.playerVelX, uniforms.playerVelY, uniforms.playerVelZ));
+  let aheadDist = aheadSeconds * max(playerSpeed, uniforms.minSpeed);
+  let lateralAngle = seed * 6.28318530718;
+  let targetPos = vec3<f32>(uniforms.playerPosX, uniforms.playerPosY, uniforms.playerPosZ)
+    + normalize(vec3<f32>(uniforms.playerFwdX, uniforms.playerFwdY, uniforms.playerFwdZ) + vec3<f32>(0.0, 0.0, 0.001)) * aheadDist
+    + vec3<f32>(cos(lateralAngle) * uniforms.followSpread, sin(seed * 2.718) * uniforms.followSpread * 0.5, sin(lateralAngle) * uniforms.followSpread);
+  let delta = targetPos - pos;
+  let dist = length(delta);
+  if (dist <= 0.001) {
+    return vec3<f32>(0.0, 0.0, 0.0);
+  }
+  let pull = min(dist / 8.0, 2.0);
+  return delta / dist * pull;
+}
+
+fn mineTargetForce(pos: vec3<f32>, vel: vec3<f32>, behavior: i32, stateTimer: f32) -> vec3<f32> {
+  if (behavior <= 1) {
+    let t = uniforms.time * 0.7 + vel.x * 0.03 + pos.x * 0.01;
+    return vec3<f32>(sin(t) * 2.3, cos(t * 0.71) * 1.2, sin(t * 1.13) * 2.3);
+  }
+  let toPlayer = vec3<f32>(uniforms.playerPosX, uniforms.playerPosY, uniforms.playerPosZ) - pos;
+  let distance = length(toPlayer);
+  if (distance <= 0.001) {
+    return vec3<f32>(0.0, 0.0, 0.0);
+  }
+  let dir = toPlayer / distance;
+  let relativeVelocity = vec3<f32>(uniforms.playerVelX, uniforms.playerVelY, uniforms.playerVelZ) - vel;
+  let closingSpeed = max(dot(relativeVelocity, dir), 0.001);
+  let leadTime = clamp(distance / closingSpeed, 0.15, 2.5);
+  let targetPos = vec3<f32>(uniforms.playerPosX, uniforms.playerPosY, uniforms.playerPosZ)
+    + vec3<f32>(uniforms.playerVelX, uniforms.playerVelY, uniforms.playerVelZ) * leadTime;
+  let targetDelta = targetPos - pos;
+  let targetDist = length(targetDelta);
+  if (targetDist <= 0.001) {
+    return vec3<f32>(0.0, 0.0, 0.0);
+  }
+  let targetDir = targetDelta / targetDist;
+  if (behavior == 2) {
+    let elapsed = uniforms.mineTelegraphDuration - max(0.0, stateTimer);
+    let progress = clamp(select(1.0, elapsed / uniforms.mineTelegraphDuration, uniforms.mineTelegraphDuration > 0.0), 0.0, 1.0);
+    let ease = progress * progress * (3.0 - 2.0 * progress);
+    let desiredVel = targetDir * (uniforms.mineTargetingMaxSpeed * ease);
+    var steer = desiredVel - vel;
+    let steerLen = length(steer);
+    if (steerLen > uniforms.mineTargetingAccel) {
+      steer *= uniforms.mineTargetingAccel / steerLen;
+    }
+    return steer;
+  }
+  if (behavior == 3) {
+    return targetDir * (uniforms.mineRocketAccel * 18.0);
+  }
+  let desiredVel = targetDir * uniforms.mineLaunchSpeed;
+  return (desiredVel - vel) * 1.8;
 }
 
 fn findCellId(pos: vec3<f32>) -> i32 {
@@ -313,7 +397,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
 
   var boid = boidsIn[boidIdx];
   let flags = i32(boid.state.z);
-  if (flags == 4 || flags == 3) {
+  if (flags == 4 || flags == 3 || flags == 5) {
     boidsOut[boidIdx] = boid;
     return;
   }
@@ -338,6 +422,9 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
   let pos = boid.position.xyz;
   let vel = boid.velocity.xyz;
   let seed = boid.velocity.w;
+  let typeId = i32(boid.extra.x);
+  let behavior = i32(boid.extra.y);
+  let stateTimer = boid.extra.z;
   let cellId = findCellId(pos);
 
   var separation = vec3<f32>(0.0, 0.0, 0.0);
@@ -349,7 +436,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
   let hasValidCell = cellId >= 0 && ucellId < arrayLength(&cellCounts);
 
   if (hasValidCell) {
-    let count = cellCounts[ucellId];
+    let count = atomicLoad(&cellCounts[ucellId]);
     let maxPerCell = uniforms.maxBoidsPerCell;
     for (var i = 0u; i < count && i < maxPerCell; i = i + 1u) {
       let otherIdx = cellBoidIndices[ucellId * maxPerCell + i];
@@ -378,7 +465,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
       for (var ni = 0u; ni < range.count; ni = ni + 1u) {
         let neighborCellId = cellNeighborIds[range.start + ni];
         if (neighborCellId >= arrayLength(&cellCounts)) { continue; }
-        let nCount = cellCounts[neighborCellId];
+        let nCount = atomicLoad(&cellCounts[neighborCellId]);
         for (var i = 0u; i < nCount && i < maxPerCell; i = i + 1u) {
           let otherIdx = cellBoidIndices[neighborCellId * maxPerCell + i];
           if (otherIdx == boidIdx) { continue; }
@@ -437,12 +524,17 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
     playerForce = toPlayer / playerDist * strength;
   }
 
+  let followForce = followTargetForce(pos, seed, age);
+  let mineForce = select(vec3<f32>(0.0, 0.0, 0.0), mineTargetForce(pos, vel, behavior, stateTimer), typeId == 4);
+
   var force = separation * uniforms.separationWeight
     + alignment * uniforms.alignmentWeight
     + cohesion * uniforms.cohesionWeight
     + wallForce * uniforms.wallAvoidanceWeight
     + flowForce * uniforms.flowWeight
-    + playerForce * uniforms.playerAvoidanceWeight;
+    + playerForce * uniforms.playerAvoidanceWeight
+    + followForce * uniforms.followWeight
+    + mineForce;
 
   let forceLen = length(force);
   if (forceLen > uniforms.maxForce) {
@@ -467,6 +559,10 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   speed = length(newVel);
+  if (typeId == 4 && behavior == 3 && speed > uniforms.mineRocketMaxSpeed) {
+    newVel = newVel * (uniforms.mineRocketMaxSpeed / speed);
+    speed = uniforms.mineRocketMaxSpeed;
+  }
   if (speed > uniforms.maxSpeed) {
     newVel = newVel * (uniforms.maxSpeed / speed);
   } else if (speed < uniforms.minSpeed && speed > 0.001) {
@@ -475,7 +571,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
 
   var newPos = pos + newVel * uniforms.dt;
 
-  if (cellId >= 0 && u32(cellId) < uniforms.cellMetadataCount) {
+  if (uniforms.followWeight <= 0.0 && cellId >= 0 && u32(cellId) < uniforms.cellMetadataCount) {
     let cell = cellMetadata[ucellId];
     let mn = cell.boundsMin.xyz + vec3<f32>(1.0, 1.0, 1.0);
     let mx = cell.boundsMax.xyz - vec3<f32>(1.0, 1.0, 1.0);
@@ -491,6 +587,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
     boidsOut[boidIdx].state.z = 0.0;
   }
   boidsOut[boidIdx].state.w = f32(max(cellId, 0));
+  boidsOut[boidIdx].extra = boid.extra;
 }
 `
 
@@ -502,10 +599,17 @@ export function uploadUniforms(
   playerX: number,
   playerY: number,
   playerZ: number,
+  playerVelX: number,
+  playerVelY: number,
+  playerVelZ: number,
+  playerFwdX: number,
+  playerFwdY: number,
+  playerFwdZ: number,
   time: number,
   cellMetadataCount: number,
 ): void {
-  const data = new Float32Array(32)
+  const data = new Float32Array(64)
+  const follow = config.boidTypes[0]?.followTarget
   data[0] = dt
   data[1] = config.maxBoids
   data[2] = activeBoids
@@ -528,20 +632,37 @@ export function uploadUniforms(
   data[20] = playerY
   data[21] = playerZ
   data[22] = time
-  data[23] = cellMetadataCount
+  data[23] = playerVelX
+  data[24] = playerVelY
+  data[25] = playerVelZ
+  data[26] = playerFwdX
+  data[27] = playerFwdY
+  data[28] = playerFwdZ
+  data[29] = follow?.minSeconds ?? 0
+  data[30] = follow?.maxSeconds ?? 0
+  data[31] = follow?.period ?? 0
+  data[32] = follow?.spread ?? 0
+  data[33] = follow?.weight ?? 0
+  data[34] = cellMetadataCount
+  data[35] = GAME_CONFIG.mines.telegraphDuration
+  data[36] = 9
+  data[37] = 18
+  data[38] = GAME_CONFIG.mines.rocketAcceleration
+  data[39] = GAME_CONFIG.mines.rocketMaxSpeed
+  data[40] = GAME_CONFIG.mines.launchSpeed
   res.device.queue.writeBuffer(res.uniformBuffer, 0, data)
 }
 
 export function uploadBoids(res: BoidsGPUResources, boids: BoidState[], buffer: 'A' | 'B'): void {
   const target = buffer === 'A' ? res.boidBufferA : res.boidBufferB
-  const data = new Float32Array(boids.length * 12)
+  const data = new Float32Array(boids.length * 16)
   for (let i = 0; i < boids.length; i++) {
     const b = boids[i]
-    const o = i * 12
+    const o = i * 16
     data[o] = b.position[0]
     data[o + 1] = b.position[1]
     data[o + 2] = b.position[2]
-    data[o + 3] = b.typeId
+    data[o + 3] = 0
     data[o + 4] = b.velocity[0]
     data[o + 5] = b.velocity[1]
     data[o + 6] = b.velocity[2]
@@ -550,8 +671,46 @@ export function uploadBoids(res: BoidsGPUResources, boids: BoidState[], buffer: 
     data[o + 9] = b.age
     data[o + 10] = b.flags
     data[o + 11] = b.cellId
+    data[o + 12] = b.typeId
+    data[o + 13] = b.behavior
+    data[o + 14] = b.stateTimer
+    data[o + 15] = 0
   }
   res.device.queue.writeBuffer(target, 0, data)
+}
+
+export function uploadBoidSubset(
+  res: BoidsGPUResources,
+  boids: Array<{ slot: number; boid: BoidState }>,
+  buffer: 'A' | 'B' | 'both',
+): void {
+  for (let i = 0; i < boids.length; i++) {
+    const { slot, boid } = boids[i]
+    const data = new Float32Array(16)
+    data[0] = boid.position[0]
+    data[1] = boid.position[1]
+    data[2] = boid.position[2]
+    data[3] = 0
+    data[4] = boid.velocity[0]
+    data[5] = boid.velocity[1]
+    data[6] = boid.velocity[2]
+    data[7] = boid.seed
+    data[8] = boid.life
+    data[9] = boid.age
+    data[10] = boid.flags
+    data[11] = boid.cellId
+    data[12] = boid.typeId
+    data[13] = boid.behavior
+    data[14] = boid.stateTimer
+    data[15] = 0
+    const offset = slot * BOID_STRUCT_SIZE
+    if (buffer === 'A' || buffer === 'both') {
+      res.device.queue.writeBuffer(res.boidBufferA, offset, data)
+    }
+    if (buffer === 'B' || buffer === 'both') {
+      res.device.queue.writeBuffer(res.boidBufferB, offset, data)
+    }
+  }
 }
 
 export function uploadCellMetadata(
@@ -623,11 +782,13 @@ export function runComputePass(
 
   const readSrc = pingPong ? res.boidBufferB : res.boidBufferA
   const readSize = Math.min(activeBoids, 50000) * BOID_STRUCT_SIZE
-  if (readSize > 0) {
+  if (readSize > 0 && !res.readbackPending) {
     commandEncoder.copyBufferToBuffer(readSrc, 0, res.readbackStaging, 0, readSize)
   }
 
-  commandEncoder.copyBufferToBuffer(res.overflowCounterBuffer, 0, res.overflowStaging, 0, 4)
+  if (!res.overflowPending) {
+    commandEncoder.copyBufferToBuffer(res.overflowCounterBuffer, 0, res.overflowStaging, 0, 4)
+  }
 
   res.device.queue.submit([commandEncoder.finish()])
 }
@@ -637,25 +798,33 @@ export async function readbackPositions(
   count: number,
 ): Promise<Float32Array | null> {
   if (count === 0) return null
+  if (res.readbackPending) return null
   const size = Math.min(count, 50000) * BOID_STRUCT_SIZE
   try {
+    res.readbackPending = true
     await res.readbackStaging.mapAsync(GPUMapMode.READ, 0, size)
     const data = new Float32Array(res.readbackStaging.getMappedRange(0, size).slice(0))
     res.readbackStaging.unmap()
+    res.readbackPending = false
     return data
   } catch {
+    res.readbackPending = false
     return null
   }
 }
 
 export async function readbackOverflow(res: BoidsGPUResources): Promise<number> {
+  if (res.overflowPending) return 0
   try {
+    res.overflowPending = true
     await res.overflowStaging.mapAsync(GPUMapMode.READ, 0, 4)
     const data = new Uint32Array(res.overflowStaging.getMappedRange(0, 4))
     const val = data[0]
     res.overflowStaging.unmap()
+    res.overflowPending = false
     return val
   } catch {
+    res.overflowPending = false
     return 0
   }
 }

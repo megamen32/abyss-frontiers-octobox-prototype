@@ -1,0 +1,282 @@
+import { AmbientLight, Color, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three'
+import { BoidsSystem } from '../boids/BoidsSystem'
+import type { BoidsConfig, BoidTypeConfig, BoidTypeInteraction } from '../boids'
+import { AMBIENT_FISH_TYPE, COMPANION_FISH_TYPE, DRONE_TYPE, PLANKTON_TYPE } from '../boids'
+import { FpsPanel } from '../ui/FpsPanel'
+import type { AABB, ChunkData, LeafCell } from '../game/types'
+
+const BENCHMARK_TYPE_ORDER = [AMBIENT_FISH_TYPE, COMPANION_FISH_TYPE, DRONE_TYPE, PLANKTON_TYPE] as const
+const COUNT_STEP = 500
+const MAX_BENCHMARK_BOIDS = 24000
+
+function makeBounds(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB {
+  return {
+    min: new Vector3(minX, minY, minZ),
+    max: new Vector3(maxX, maxY, maxZ),
+  }
+}
+
+function makeCell(id: string, minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): LeafCell {
+  return {
+    id,
+    depth: 0,
+    bounds: makeBounds(minX, minY, minZ, maxX, maxY, maxZ),
+    kind: 'free',
+    caveBias: 0.5,
+  }
+}
+
+function interaction(partial: Partial<BoidTypeInteraction> = {}): BoidTypeInteraction {
+  return {
+    separation: 0,
+    alignment: 0,
+    cohesion: 0,
+    pursuit: 0,
+    flee: 0,
+    ignore: false,
+    ...partial,
+  }
+}
+
+function makeBenchmarkChunk(): ChunkData {
+  const cells = [
+    makeCell('a', -180, -120, -180, 0, 120, 0),
+    makeCell('b', 0, -120, -180, 180, 120, 0),
+    makeCell('c', -180, -120, 0, 0, 120, 180),
+    makeCell('d', 0, -120, 0, 180, 120, 180),
+  ]
+  return {
+    key: 'benchmark',
+    coord: { x: 0, y: 0, z: 0 },
+    seed: 1,
+    bounds: makeBounds(-180, -120, -180, 180, 120, 180),
+    cells,
+    portals: [],
+    adjacency: [
+      ['a', 'b'], ['a', 'c'], ['b', 'd'], ['c', 'd'],
+    ],
+    obstacles: [],
+    loot: [],
+    mines: [],
+  }
+}
+
+function cloneType(base: BoidTypeConfig, targetCount: number): BoidTypeConfig {
+  return { ...base, targetCount }
+}
+
+function createBenchmarkConfig(counts: number[]): BoidsConfig {
+  const boidTypes = [
+    cloneType(AMBIENT_FISH_TYPE, counts[0]),
+    cloneType(COMPANION_FISH_TYPE, counts[1]),
+    cloneType(DRONE_TYPE, counts[2]),
+    cloneType(PLANKTON_TYPE, counts[3]),
+  ]
+  const total = counts.reduce((sum, value) => sum + value, 0)
+  return {
+    enabled: true,
+    maxBoids: Math.max(total, 1000),
+    initialBoids: total,
+    simulationRadius: 420,
+    renderRadius: 480,
+    spawnRadius: 220,
+    despawnRadius: 520,
+    perceptionRadius: 18,
+    separationRadius: 6,
+    minSpeed: 2,
+    maxSpeed: 20,
+    maxForce: 10,
+    turnRate: 4,
+    separationWeight: 1.5,
+    alignmentWeight: 0.8,
+    cohesionWeight: 0.5,
+    wallAvoidanceWeight: 2.6,
+    flowWeight: 0,
+    playerAvoidanceWeight: 0,
+    avoidPlayerRadius: 0,
+    gridCellSize: 16,
+    maxBoidsPerCell: 128,
+    visual: {
+      type: 'fish',
+      scale: 1,
+      animate: true,
+      baseColor: 0x88ccff,
+      emissiveStrength: 0.25,
+      scaleVariation: 0.35,
+      speedColoring: true,
+      fogAware: false,
+    },
+    lod: {
+      nearDistance: 120,
+      midDistance: 260,
+      farDistance: 480,
+      cullDistance: 520,
+    },
+    fallback: { cpuMaxBoids: Math.max(total, 1000) },
+    boidTypes,
+    interactions: [
+      [interaction({ separation: 1, alignment: 1, cohesion: 1 }), interaction({ separation: 0.85, alignment: 0.8, cohesion: 0.7 }), interaction({ separation: 1.1, flee: 0.15 }), interaction({ separation: 0.6, cohesion: 0.4 })],
+      [interaction({ separation: 0.9, alignment: 0.9, cohesion: 0.8 }), interaction({ separation: 1, alignment: 1, cohesion: 1 }), interaction({ separation: 0.8, alignment: 0.4, cohesion: 0.25 }), interaction({ separation: 0.4, cohesion: 0.6 })],
+      [interaction({ separation: 0.9, pursuit: 0.12 }), interaction({ separation: 0.8, pursuit: 0.12 }), interaction({ separation: 1, alignment: 0.6, cohesion: 0.2 }), interaction({ separation: 0.6, pursuit: 0.1 })],
+      [interaction({ separation: 0.8, cohesion: 0.6 }), interaction({ separation: 0.4, cohesion: 0.7 }), interaction({ separation: 0.7, flee: 0.08 }), interaction({ separation: 1, alignment: 0.2, cohesion: 0.9 })],
+    ],
+  }
+}
+
+export class BoidsBenchmark {
+  private readonly shell = document.createElement('div')
+  private readonly viewport = document.createElement('div')
+  private readonly overlay = document.createElement('div')
+  private readonly typesEl = document.createElement('div')
+  private readonly statsEl = document.createElement('div')
+  private readonly hintEl = document.createElement('div')
+  private readonly fpsPanel = new FpsPanel('Boids Benchmark FPS')
+  private readonly renderer = new WebGLRenderer({ antialias: true })
+  private readonly scene = new Scene()
+  private readonly camera = new PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2000)
+  private readonly playerPosition = new Vector3(0, 0, 0)
+  private readonly playerVelocity = new Vector3(0, 0, 0)
+  private readonly playerForward = new Vector3(0, 0, 1)
+  private readonly chunk = makeBenchmarkChunk()
+  private counts = [4000, 1500, 500, 2000]
+  private selectedType = 0
+  private boids = this.createSystem()
+  private running = false
+  private lastTime = 0
+
+  constructor(parent: HTMLElement) {
+    this.shell.className = 'shell benchmark-shell'
+    this.viewport.className = 'viewport'
+    this.overlay.className = 'benchmark-overlay'
+    this.typesEl.className = 'benchmark-types'
+    this.statsEl.className = 'benchmark-stats'
+    this.hintEl.className = 'benchmark-hints'
+    this.hintEl.textContent = '1-4 select type  +/- change selected type by 500'
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    this.renderer.setSize(window.innerWidth, window.innerHeight)
+    this.renderer.setClearColor(new Color('#02070c'))
+    this.viewport.append(this.renderer.domElement)
+    this.scene.add(new AmbientLight(0xffffff, 1.6))
+    this.camera.position.set(0, 70, 290)
+    this.camera.lookAt(0, 0, 0)
+    this.overlay.append(this.fpsPanel.root, this.statsEl, this.typesEl, this.hintEl)
+    this.shell.append(this.viewport, this.overlay)
+    parent.append(this.shell)
+    this.scene.add(this.boids.object3d)
+    this.rebuildTypeControls()
+    window.addEventListener('resize', this.onResize)
+    window.addEventListener('keydown', this.onKeyDown)
+  }
+
+  start(): void {
+    this.running = true
+    requestAnimationFrame(this.loop)
+  }
+
+  dispose(): void {
+    this.running = false
+    window.removeEventListener('resize', this.onResize)
+    window.removeEventListener('keydown', this.onKeyDown)
+    this.scene.remove(this.boids.object3d)
+    this.boids.dispose()
+    this.renderer.dispose()
+  }
+
+  private createSystem(): BoidsSystem {
+    const system = new BoidsSystem(createBenchmarkConfig(this.counts))
+    system.syncChunks([this.chunk], [])
+    return system
+  }
+
+  private rebuildSystem(): void {
+    const old = this.boids
+    this.scene.remove(old.object3d)
+    old.dispose()
+    this.boids = this.createSystem()
+    this.scene.add(this.boids.object3d)
+    this.rebuildTypeControls()
+  }
+
+  private adjustSelectedType(delta: number): void {
+    const next = Math.max(0, this.counts[this.selectedType] + delta)
+    const totalWithoutSelected = this.counts.reduce((sum, value, index) => index === this.selectedType ? sum : sum + value, 0)
+    this.counts[this.selectedType] = Math.min(MAX_BENCHMARK_BOIDS - totalWithoutSelected, next)
+    this.rebuildSystem()
+  }
+
+  private rebuildTypeControls(): void {
+    this.typesEl.innerHTML = ''
+    let total = 0
+    for (let i = 0; i < BENCHMARK_TYPE_ORDER.length; i++) {
+      total += this.counts[i]
+      const type = BENCHMARK_TYPE_ORDER[i]
+      const row = document.createElement('div')
+      row.className = 'benchmark-type-row' + (i === this.selectedType ? ' selected' : '')
+      const label = document.createElement('button')
+      label.className = 'benchmark-type-label'
+      label.textContent = `${i + 1}. ${type.name}`
+      label.addEventListener('click', () => {
+        this.selectedType = i
+        this.rebuildTypeControls()
+      })
+      const minus = document.createElement('button')
+      minus.className = 'benchmark-step-btn'
+      minus.textContent = '-'
+      minus.addEventListener('click', () => this.adjustType(i, -COUNT_STEP))
+      const value = document.createElement('span')
+      value.className = 'benchmark-type-count'
+      value.textContent = `${this.counts[i]}`
+      const plus = document.createElement('button')
+      plus.className = 'benchmark-step-btn'
+      plus.textContent = '+'
+      plus.addEventListener('click', () => this.adjustType(i, COUNT_STEP))
+      row.append(label, minus, value, plus)
+      this.typesEl.append(row)
+    }
+    this.statsEl.textContent = `total ${total}  mode ${this.boids.debug.gpuMode ? 'GPU' : 'CPU'}  visible ${this.boids.debug.boidCount}  active ${this.boids.debug.activeBoidCount}`
+  }
+
+  private adjustType(index: number, delta: number): void {
+    this.selectedType = index
+    const next = Math.max(0, this.counts[index] + delta)
+    const totalWithoutSelected = this.counts.reduce((sum, value, i) => i === index ? sum : sum + value, 0)
+    this.counts[index] = Math.min(MAX_BENCHMARK_BOIDS - totalWithoutSelected, next)
+    this.rebuildSystem()
+  }
+
+  private onResize = (): void => {
+    this.camera.aspect = window.innerWidth / window.innerHeight
+    this.camera.updateProjectionMatrix()
+    this.renderer.setSize(window.innerWidth, window.innerHeight)
+  }
+
+  private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key >= '1' && event.key <= '4') {
+      this.selectedType = Number(event.key) - 1
+      this.rebuildTypeControls()
+      return
+    }
+    if (event.key === '+' || event.key === '=') {
+      this.adjustSelectedType(COUNT_STEP)
+      return
+    }
+    if (event.key === '-' || event.key === '_') {
+      this.adjustSelectedType(-COUNT_STEP)
+    }
+  }
+
+  private loop = (timestamp: number): void => {
+    if (!this.running) return
+    const rawDt = Math.max(0.0001, (timestamp - this.lastTime || 16.6) / 1000)
+    const dt = Math.min(0.05, rawDt)
+    this.lastTime = timestamp
+    this.boids.update(dt, this.camera.position, this.playerPosition, this.playerVelocity, this.playerForward)
+    this.renderer.render(this.scene, this.camera)
+    const fps = 1 / rawDt
+    this.fpsPanel.record(fps)
+    const debug = this.boids.debug
+    const total = this.counts.reduce((sum, value) => sum + value, 0)
+    this.statsEl.textContent = `total ${total}  mode ${debug.gpuMode ? 'GPU' : 'CPU'}  visible ${debug.boidCount}  active ${debug.activeBoidCount}  cells ${debug.activeCells}  sim ${debug.simulationMs.toFixed(1)}ms  render ${debug.renderMs.toFixed(1)}ms`
+    requestAnimationFrame(this.loop)
+  }
+}

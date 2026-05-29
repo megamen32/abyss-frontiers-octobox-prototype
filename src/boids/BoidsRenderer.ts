@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DoubleSide,
   Float32BufferAttribute,
   InstancedBufferAttribute,
   InstancedBufferGeometry,
@@ -26,9 +27,11 @@ export class BoidsRenderer {
   private readonly instanceColors: Float32Array
   private readonly instanceAlphas: Float32Array
   private readonly maxBoids: number
+  private readonly typeColors: Color[]
 
   constructor(config: BoidsConfig) {
     this.maxBoids = Math.min(config.maxBoids, config.fallback.cpuMaxBoids)
+    this.typeColors = config.boidTypes.map(t => new Color(t.color))
     const geometry = this.createFishGeometry()
     const instancedGeo = new InstancedBufferGeometry()
     instancedGeo.index = geometry.index
@@ -56,6 +59,7 @@ export class BoidsRenderer {
       fragmentShader: BOIDS_FRAGMENT_SHADER,
       transparent: true,
       depthWrite: false,
+      side: DoubleSide,
       fog: false,
     })
 
@@ -101,6 +105,7 @@ export class BoidsRenderer {
       }
 
       const seed = b.seed
+      const typeColor = this.typeColors[b.typeId] ?? this.typeColors[0] ?? new Color(0x88ccff)
       _right.crossVectors(_forward, _up).normalize()
       if (_right.lengthSq() < 0.001) {
         _right.set(1, 0, 0)
@@ -113,10 +118,11 @@ export class BoidsRenderer {
       this.instanceRotations[o4 + 2] = quat.z
       this.instanceRotations[o4 + 3] = quat.w
 
-      const hue = (seed * 0.001) % 1
-      const saturation = 0.3 + Math.min(speed / 15, 0.5)
-      const lightness = 0.4 + Math.min(speed / 20, 0.3)
-      const c = new Color().setHSL(hue, saturation, lightness)
+      const c = typeColor.clone()
+      if (speed > 0.001) {
+        const speedGlow = Math.min(speed / 20, 0.2)
+        c.offsetHSL((seed * 0.0002) % 0.03, 0, speedGlow)
+      }
       this.instanceColors[o] = c.r
       this.instanceColors[o + 1] = c.g
       this.instanceColors[o + 2] = c.b
@@ -147,7 +153,7 @@ export class BoidsRenderer {
     const alphaAttr = this.mesh.geometry.getAttribute('instanceAlpha') as InstancedBufferAttribute
 
     for (let i = 0; i < count && visible < this.maxBoids; i++) {
-      const o = i * 12
+      const o = i * 16
       const flags = data[o + 10]
       if (flags === 4) continue
 
@@ -164,6 +170,8 @@ export class BoidsRenderer {
       else _forward.set(0, 0, 1)
 
       const seed = data[o + 7]
+      const typeId = data[o + 12]
+      const typeColor = this.typeColors[typeId] ?? this.typeColors[0] ?? new Color(0x88ccff)
 
       _right.crossVectors(_forward, _up).normalize()
       if (_right.lengthSq() < 0.001) _right.set(1, 0, 0)
@@ -175,10 +183,11 @@ export class BoidsRenderer {
       this.instanceRotations[vo4 + 2] = quat.z
       this.instanceRotations[vo4 + 3] = quat.w
 
-      const hue = (seed * 0.001) % 1
-      const saturation = 0.3 + Math.min(speed / 15, 0.5)
-      const lightness = 0.4 + Math.min(speed / 20, 0.3)
-      const c = new Color().setHSL(hue, saturation, lightness)
+      const c = typeColor.clone()
+      if (speed > 0.001) {
+        const speedGlow = Math.min(speed / 20, 0.2)
+        c.offsetHSL((seed * 0.0002) % 0.03, 0, speedGlow)
+      }
       this.instanceColors[vo] = c.r
       this.instanceColors[vo + 1] = c.g
       this.instanceColors[vo + 2] = c.b
@@ -246,48 +255,24 @@ export class BoidsRenderer {
 
   private createFishGeometry(): BufferGeometry {
     const vertices = new Float32Array([
-      0, 0, 1.5,
-      -0.3, 0.1, 0,
-      0.3, 0.1, 0,
-      -0.3, -0.1, 0,
-      0.3, -0.1, 0,
-      0, 0.15, -0.8,
-      0, -0.15, -0.8,
-      -0.5, 0, -0.6,
-      0.5, 0, -0.6,
-    ])
-
-    const normals = new Float32Array([
-      0, 0, 1,
-      -0.5, 0.3, 0.3,
-      0.5, 0.3, 0.3,
-      -0.5, -0.3, 0.3,
-      0.5, -0.3, 0.3,
-      0, 0.7, -0.5,
-      0, -0.7, -0.5,
-      -0.7, 0, -0.3,
-      0.7, 0, -0.3,
+      0.5, 0, 0,
+      0.08, 0.13, 0,
+      0.08, -0.13, 0,
+      -0.4, 0.06, 0,
+      -0.4, -0.06, 0,
     ])
 
     const indices = new Uint16Array([
       0, 1, 2,
+      1, 3, 4,
+      0, 2, 4,
       0, 4, 3,
-      1, 5, 2,
-      3, 4, 6,
-      1, 3, 5,
-      2, 6, 4,
-      5, 7, 8,
-      5, 8, 6,
-      1, 7, 5,
-      2, 6, 8,
-      3, 6, 5,
-      4, 8, 7,
     ])
 
     const geo = new BufferGeometry()
     geo.setAttribute('position', new Float32BufferAttribute(vertices, 3))
-    geo.setAttribute('normal', new Float32BufferAttribute(normals, 3))
     geo.setIndex(new BufferAttribute(indices, 1))
+    geo.computeVertexNormals()
     return geo
   }
 
@@ -323,12 +308,13 @@ void main() {
 
   vec3 v = position;
 
-  // Tail wiggle for fish
-  if (v.z < -0.3) {
-    float phase = instanceColor.r * 100.0 + time * 4.0;
-    float wiggle = sin(phase) * 0.3 * smoothstep(-0.3, -0.8, v.z);
-    v.x += wiggle;
-  }
+  float tailMask = smoothstep(0.12, -0.45, v.x);
+  float seed = instanceColor.r * 97.0 + instanceColor.g * 57.0 + instanceColor.b * 31.0;
+  float phase = time * 6.0 + seed;
+  float swim = sin(phase + v.x * 10.0) * tailMask;
+  v.y += swim * 0.035;
+  v.z += swim * 0.06;
+  v.x += sin(phase * 0.7 + v.x * 4.0) * tailMask * 0.015;
 
   // Quaternion rotation
   vec4 q = instanceRotation;
@@ -361,14 +347,15 @@ varying float vFogDepth;
 
 void main() {
   float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
-  vec3 color = mix(vColor, fogColor, fogFactor);
+  vec3 deep = vec3(0.02, 0.05, 0.07);
+  vec3 color = mix(deep, vColor, 0.3 + 0.7 * (1.0 - fogFactor));
 
-  // Emissive glow
-  color += vColor * 0.15 * (1.0 - fogFactor);
+  color += vColor * 0.12 * (1.0 - fogFactor);
 
-  float alpha = vAlpha * (1.0 - fogFactor * 0.8);
+  float alpha = vAlpha * (0.7 + 0.3 * (1.0 - fogFactor));
   if (alpha < 0.01) discard;
 
+  color = mix(color, fogColor, fogFactor);
   gl_FragColor = vec4(color, alpha);
 }
 `

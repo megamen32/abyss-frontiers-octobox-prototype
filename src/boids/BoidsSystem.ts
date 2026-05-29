@@ -1,6 +1,7 @@
 import { Vector3, Color } from 'three'
 import type { Object3D } from 'three'
-import type { BoidsConfig, BoidsDebugStats, BoidState } from './BoidsTypes'
+import type { BoidsConfig, BoidsDebugStats, BoidsFollowPredictor, BoidState } from './BoidsTypes'
+import { BoidBehavior } from './BoidsTypes'
 import { DEFAULT_BOIDS_CONFIG } from './BoidsConfig'
 import { BoidsRenderer } from './BoidsRenderer'
 import { BoidsCPUSimulation } from './BoidsCPUSimulation'
@@ -9,6 +10,7 @@ import {
   initGPUResources,
   uploadUniforms,
   uploadBoids,
+  uploadBoidSubset,
   uploadCellMetadata,
   uploadNeighborData,
   runComputePass,
@@ -18,7 +20,6 @@ import {
   type BoidsGPUResources,
 } from './BoidsCompute'
 import type { ChunkData } from '../game/types'
-import { BoidFlags } from './BoidsTypes'
 
 export class BoidsSystem {
   private config: BoidsConfig
@@ -93,25 +94,39 @@ export class BoidsSystem {
     c.setRGB(color.r, color.g, color.b)
     this.renderer.setFog(c, near, far)
   }
-  update(dt: number, cameraPosition: Vector3, playerPosition: Vector3): void {
+  update(
+    dt: number,
+    cameraPosition: Vector3,
+    playerPosition: Vector3,
+    playerVelocity?: Vector3,
+    playerForward?: Vector3,
+    predictor?: BoidsFollowPredictor,
+  ): void {
     if (!this.enabled) return
     this.time += dt
 
     const simStart = performance.now()
 
     if (this.useGPU && this.gpuResources) {
-      this.updateGPU(dt, cameraPosition, playerPosition)
+      this.updateGPU(dt, cameraPosition, playerPosition, playerVelocity, playerForward, predictor)
     } else {
-      this.updateCPU(dt, cameraPosition, playerPosition)
+      this.updateCPU(dt, cameraPosition, playerPosition, playerVelocity, playerForward, predictor)
     }
 
     this.debugStats.simulationMs = performance.now() - simStart
   }
 
-  private updateCPU(dt: number, cameraPosition: Vector3, playerPosition: Vector3): void {
+  private updateCPU(
+    dt: number,
+    cameraPosition: Vector3,
+    playerPosition: Vector3,
+    playerVelocity?: Vector3,
+    playerForward?: Vector3,
+    predictor?: BoidsFollowPredictor,
+  ): void {
     this.debugStats.gpuMode = false
 
-    this.cpuSim.update(dt, playerPosition, cameraPosition)
+    this.cpuSim.update(dt, playerPosition, cameraPosition, playerVelocity, playerForward, predictor)
 
     const renderStart = performance.now()
     const boids = this.cpuSim.getBoids()
@@ -130,7 +145,14 @@ export class BoidsSystem {
       : 0
   }
 
-  private updateGPU(dt: number, cameraPosition: Vector3, playerPosition: Vector3): void {
+  private updateGPU(
+    dt: number,
+    cameraPosition: Vector3,
+    playerPosition: Vector3,
+    playerVelocity?: Vector3,
+    playerForward?: Vector3,
+    predictor?: BoidsFollowPredictor,
+  ): void {
     this.debugStats.gpuMode = true
 
     const res = this.gpuResources!
@@ -144,27 +166,34 @@ export class BoidsSystem {
 
     if (!this.gpuBoidsUploaded && this.cpuSim.getActiveCount() > 0) {
       const allBoids = this.cpuSim.getBoids()
-      const activeBoids: BoidState[] = []
-      for (let i = 0; i < allBoids.length; i++) {
-        if (allBoids[i].flags !== BoidFlags.DEAD) activeBoids.push(allBoids[i])
-      }
-      if (activeBoids.length > 0) {
-        uploadBoids(res, activeBoids, 'A')
+      if (allBoids.length > 0) {
+        uploadBoids(res, [...allBoids], 'A')
         this.gpuBoidsUploaded = true
-        this.debugStats.activeBoidCount = activeBoids.length
+        this.debugStats.activeBoidCount = this.cpuSim.getActiveCount()
       }
     }
 
     if (!this.gpuBoidsUploaded) {
-      this.updateCPU(dt, cameraPosition, playerPosition)
+      this.updateCPU(dt, cameraPosition, playerPosition, playerVelocity, playerForward, predictor)
       return
     }
 
-    const activeBoids = this.debugStats.activeBoidCount
+    const activeBoids = this.cpuSim.getBoids().length
+    this.debugStats.activeBoidCount = this.cpuSim.getActiveCount()
+    const dirtyExternalBoids = this.cpuSim.consumeDirtyExternalBoids()
+    if (dirtyExternalBoids.length > 0) {
+      uploadBoidSubset(res, dirtyExternalBoids, 'both')
+    }
 
     uploadUniforms(
       res, dt, activeBoids, this.config,
       playerPosition.x, playerPosition.y, playerPosition.z,
+      playerVelocity?.x ?? 0,
+      playerVelocity?.y ?? 0,
+      playerVelocity?.z ?? 0,
+      playerForward?.x ?? 0,
+      playerForward?.y ?? 0,
+      playerForward?.z ?? 1,
       this.time, activeCells.length,
     )
 
@@ -219,6 +248,66 @@ export class BoidsSystem {
   syncChunks(added: ChunkData[], removed: string[]): void {
     this.adapter.syncChunks(added, removed)
     this.cellDataDirty = true
+  }
+
+  upsertKinematicBoid(
+    id: string,
+    position: Vector3,
+    velocity: Vector3,
+    typeId: number,
+  ): void {
+    const cellId = this.adapter.findCellByPosition(position)
+    this.cpuSim.upsertKinematicBoid(
+      id,
+      position.x,
+      position.y,
+      position.z,
+      velocity.x,
+      velocity.y,
+      velocity.z,
+      typeId,
+      cellId,
+    )
+  }
+
+  removeKinematicBoid(id: string): void {
+    this.cpuSim.removeKinematicBoid(id)
+  }
+
+  upsertManagedBoid(
+    id: string,
+    position: Vector3,
+    velocity: Vector3,
+    typeId: number,
+    behavior: BoidBehavior,
+    stateTimer: number,
+  ): void {
+    const cellId = this.adapter.findCellByPosition(position)
+    this.cpuSim.upsertManagedBoid(
+      id,
+      position.x,
+      position.y,
+      position.z,
+      velocity.x,
+      velocity.y,
+      velocity.z,
+      typeId,
+      behavior,
+      stateTimer,
+      cellId,
+    )
+  }
+
+  updateManagedBoid(id: string, behavior: BoidBehavior, stateTimer: number): void {
+    this.cpuSim.updateManagedBoid(id, behavior, stateTimer)
+  }
+
+  getManagedBoid(id: string): BoidState | null {
+    return this.cpuSim.getManagedBoid(id)
+  }
+
+  removeManagedBoid(id: string): void {
+    this.cpuSim.removeKinematicBoid(id)
   }
 
   getDebugHTML(): string {

@@ -23,6 +23,7 @@ function testInput(overrides: Partial<InputState> = {}): InputState {
     right: 0,
     vertical: 0,
     boost: false,
+    brake: false,
     accelerationAdjust: 0,
     dragAdjust: 0,
     turnAdjust: 0,
@@ -32,6 +33,8 @@ function testInput(overrides: Partial<InputState> = {}): InputState {
     fogTogglePressed: false,
     debugUiTogglePressed: false,
     pausePressed: false,
+    autopilotTogglePressed: false,
+    cameraYaw: 0,
     ...overrides,
   };
 }

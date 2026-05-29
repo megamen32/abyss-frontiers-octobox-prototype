@@ -5,7 +5,7 @@ import { depthBelowSurface, depthProgress } from '../utils/depth';
 import { GAME_CONFIG } from '../config';
 
 // Pre-sampled time horizons (seconds). Any t outside this range is clamped to the nearest boundary.
-const SAMPLE_TIMES = [0, 0.25, 0.5, 1.0, 2.0, 4.0];
+export const SAMPLE_TIMES = [0, 0.25, 0.5, 1.0, 2.0, 4.0, 7.0, 10.0] as const;
 
 /**
  * Per-frame ship trajectory predictor.

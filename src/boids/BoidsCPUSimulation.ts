@@ -1,8 +1,9 @@
 import { Vector3 } from 'three'
-import type { BoidState, BoidsConfig } from './BoidsTypes'
-import { BoidFlags } from './BoidsTypes'
+import type { BoidState, BoidTypeConfig, BoidsConfig, BoidsFollowPredictor, BoidTypeInteraction } from './BoidsTypes'
+import { BoidBehavior, BoidFlags } from './BoidsTypes'
 import { BoidsSpatialGrid } from './BoidsSpatialGrid'
 import { BoidsOctoBoxAdapter } from './BoidsOctoBoxAdapter'
+import { GAME_CONFIG } from '../game/config'
 
 const _v = new Vector3()
 const _sep = new Vector3()
@@ -10,8 +11,24 @@ const _ali = new Vector3()
 const _coh = new Vector3()
 const _wall = new Vector3()
 const _flow = new Vector3()
-const _player = new Vector3()
+const _avoid = new Vector3()
+const _follow = new Vector3()
 const _force = new Vector3()
+const _target = new Vector3()
+const _wander = new Vector3()
+
+const MINE_TARGETING_MAX_SPEED = 9
+const MINE_TARGETING_ACCEL = 18
+
+function typeOf(config: BoidsConfig, typeId: number): BoidTypeConfig {
+  return config.boidTypes[typeId] ?? config.boidTypes[0]
+}
+
+function interactionOf(config: BoidsConfig, fromTypeId: number, toTypeId: number): BoidTypeInteraction {
+  return config.interactions[fromTypeId]?.[toTypeId]
+    ?? config.interactions[fromTypeId]?.[fromTypeId]
+    ?? { separation: 1, alignment: 1, cohesion: 1, pursuit: 0, flee: 0, ignore: false }
+}
 
 export class BoidsCPUSimulation {
   private boids: BoidState[]
@@ -19,9 +36,15 @@ export class BoidsCPUSimulation {
   private config: BoidsConfig
   private adapter: BoidsOctoBoxAdapter
   private maxBoids: number
-  private activeCount = 0
+  private readonly externalSlots = new Map<string, number>()
+  private readonly dirtyExternalSlots = new Set<number>()
+  activeCount = 0
   private spawnCount = 0
   private despawnCount = 0
+
+  private lastPlayerPos = new Vector3()
+  private lastPlayerVel = new Vector3()
+  private lastPlayerFwd = new Vector3(0, 0, 1)
 
   constructor(config: BoidsConfig, adapter: BoidsOctoBoxAdapter) {
     this.config = config
@@ -34,6 +57,8 @@ export class BoidsCPUSimulation {
         velocity: [0, 0, 0],
         seed: 0,
         typeId: 0,
+        behavior: BoidBehavior.NONE,
+        stateTimer: 0,
         life: 0,
         cellId: -1,
         flags: BoidFlags.DEAD,
@@ -43,226 +68,256 @@ export class BoidsCPUSimulation {
     this.grid = new BoidsSpatialGrid(config.gridCellSize)
   }
 
-  getBoids(): readonly BoidState[] {
-    return this.boids
-  }
-
-  getActiveCount(): number {
-    return this.activeCount
-  }
-
-  getGrid(): BoidsSpatialGrid {
-    return this.grid
-  }
+  getBoids(): readonly BoidState[] { return this.boids }
+  getActiveCount(): number { return this.activeCount }
+  getGrid(): BoidsSpatialGrid { return this.grid }
 
   update(
     dt: number,
     playerPosition: Vector3,
     cameraPosition: Vector3,
+    playerVelocity?: Vector3,
+    playerForward?: Vector3,
+    predictor?: BoidsFollowPredictor,
   ): void {
     const cfg = this.config
+    this.lastPlayerPos.copy(playerPosition)
+    if (playerVelocity) this.lastPlayerVel.copy(playerVelocity)
+    if (playerForward) this.lastPlayerFwd.copy(playerForward)
+
     this.grid.clear()
 
+    // Phase 1: lifecycle + insert into grid
     for (let i = 0; i < this.maxBoids; i++) {
       const b = this.boids[i]
       if (b.flags === BoidFlags.DEAD) continue
 
+      if (b.flags === BoidFlags.KINEMATIC) {
+        this.grid.insert(i, b.position)
+        continue
+      }
+
       b.age += dt
-
       _v.set(b.position[0], b.position[1], b.position[2])
-      const distToCamera = _v.distanceTo(cameraPosition)
 
-      if (b.flags === BoidFlags.ACTIVE && distToCamera > cfg.despawnRadius) {
+      if (b.flags === BoidFlags.ACTIVE && _v.distanceTo(cameraPosition) > cfg.despawnRadius) {
         b.flags = BoidFlags.DESPAWNING
+        this.despawnCount++
       }
 
       if (b.flags === BoidFlags.DESPAWNING) {
         b.life -= dt * 2
-        if (b.life <= 0) {
-          b.flags = BoidFlags.DEAD
-          this.activeCount--
-          continue
-        }
+        if (b.life <= 0) { b.flags = BoidFlags.DEAD; this.activeCount--; continue }
       }
 
       if (b.flags === BoidFlags.SPAWNING) {
         b.life += dt * 2
-        if (b.life >= 1) {
-          b.life = 1
-          b.flags = BoidFlags.ACTIVE
-        }
+        if (b.life >= 1) { b.life = 1; b.flags = BoidFlags.ACTIVE }
       }
 
       this.grid.insert(i, b.position)
     }
 
-    this.spawnAround(playerPosition)
+    // Phase 2: spawn new boids
+    this.trySpawn(playerPosition)
 
-    const simR2 = cfg.simulationRadius * cfg.simulationRadius
+    // Phase 3: simulate forces
 
     for (let i = 0; i < this.maxBoids; i++) {
       const b = this.boids[i]
-      if (b.flags === BoidFlags.DEAD || b.flags === BoidFlags.SLEEPING) continue
+      if (b.flags === BoidFlags.DEAD || b.flags === BoidFlags.SLEEPING || b.flags === BoidFlags.KINEMATIC) continue
 
       _v.set(b.position[0], b.position[1], b.position[2])
-      const distToPlayer = _v.distanceTo(playerPosition)
-      if (distToPlayer > simR2 * 1.5) continue
+      if (_v.distanceTo(playerPosition) > cfg.simulationRadius) continue
 
+      const tc = typeOf(cfg, b.typeId)
       const cellId = this.adapter.findCellByPosition(_v)
       b.cellId = cellId
 
-      const connectedIds = this.buildConnectedSet(cellId)
-
-      const neighbors = this.grid.queryNeighbors(
-        b.position,
-        cfg.perceptionRadius,
-        this.boids,
-        i,
-        50,
-        connectedIds,
-      )
+      const connectedIds = buildConnectedSet(this.adapter, cellId)
+      const neighbors = this.grid.queryNeighbors(b.position, tc.perceptionRadius, this.boids, i, 50, connectedIds)
 
       _sep.set(0, 0, 0)
       _ali.set(0, 0, 0)
       _coh.set(0, 0, 0)
+      const pursuit = new Vector3()
+      const flee = new Vector3()
       let count = 0
 
       for (let n = 0; n < neighbors.length; n++) {
         const other = this.boids[neighbors[n]]
+        const rel = interactionOf(cfg, b.typeId, other.typeId)
+        if (rel.ignore) continue
         const dx = b.position[0] - other.position[0]
         const dy = b.position[1] - other.position[1]
         const dz = b.position[2] - other.position[2]
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
-
-        if (dist < cfg.separationRadius && dist > 0.001) {
-          _sep.x += dx / dist / dist
-          _sep.y += dy / dist / dist
-          _sep.z += dz / dist / dist
+        if (dist < tc.separationRadius && dist > 0.001) {
+          _sep.x += (dx / dist / dist) * rel.separation
+          _sep.y += (dy / dist / dist) * rel.separation
+          _sep.z += (dz / dist / dist) * rel.separation
         }
-
-        _ali.x += other.velocity[0]
-        _ali.y += other.velocity[1]
-        _ali.z += other.velocity[2]
-
-        _coh.x += other.position[0]
-        _coh.y += other.position[1]
-        _coh.z += other.position[2]
-        count++
+        if (rel.alignment > 0) {
+          _ali.x += other.velocity[0] * rel.alignment
+          _ali.y += other.velocity[1] * rel.alignment
+          _ali.z += other.velocity[2] * rel.alignment
+        }
+        if (rel.cohesion > 0) {
+          _coh.x += other.position[0] * rel.cohesion
+          _coh.y += other.position[1] * rel.cohesion
+          _coh.z += other.position[2] * rel.cohesion
+        }
+        if (rel.pursuit > 0) {
+          pursuit.x += (other.position[0] - b.position[0]) * rel.pursuit
+          pursuit.y += (other.position[1] - b.position[1]) * rel.pursuit
+          pursuit.z += (other.position[2] - b.position[2]) * rel.pursuit
+        }
+        if (rel.flee > 0) {
+          flee.x += (b.position[0] - other.position[0]) * rel.flee
+          flee.y += (b.position[1] - other.position[1]) * rel.flee
+          flee.z += (b.position[2] - other.position[2]) * rel.flee
+        }
+        count += 1
       }
 
       if (count > 0) {
         _ali.divideScalar(count)
-        const aliLen = _ali.length()
-        if (aliLen > 0) _ali.divideScalar(aliLen)
-
+        const al = _ali.length(); if (al > 0.001) _ali.divideScalar(al)
         _coh.x = _coh.x / count - b.position[0]
         _coh.y = _coh.y / count - b.position[1]
         _coh.z = _coh.z / count - b.position[2]
-        const cohLen = _coh.length()
-        if (cohLen > 0) _coh.divideScalar(cohLen)
+        const cl = _coh.length(); if (cl > 0.001) _coh.divideScalar(cl)
       }
+      if (pursuit.lengthSq() > 0.0001) pursuit.normalize()
+      if (flee.lengthSq() > 0.0001) flee.normalize()
 
+      // Wall avoidance from OctoBox bounds
       _wall.set(0, 0, 0)
       if (cellId >= 0) {
         const bounds = this.adapter.getCellBounds(cellId)
         if (bounds) {
-          const margin = 3
-          const lookAhead = 4
-          const px = b.position[0] + b.velocity[0] * lookAhead * dt
-          const py = b.position[1] + b.velocity[1] * lookAhead * dt
-          const pz = b.position[2] + b.velocity[2] * lookAhead * dt
-
-          if (px < bounds.min.x + margin) _wall.x += (bounds.min.x + margin - px) * 0.5
-          if (px > bounds.max.x - margin) _wall.x += (bounds.max.x - margin - px) * 0.5
-          if (py < bounds.min.y + margin) _wall.y += (bounds.min.y + margin - py) * 0.5
-          if (py > bounds.max.y - margin) _wall.y += (bounds.max.y - margin - py) * 0.5
-          if (pz < bounds.min.z + margin) _wall.z += (bounds.min.z + margin - pz) * 0.5
-          if (pz > bounds.max.z - margin) _wall.z += (bounds.max.z - margin - pz) * 0.5
+          const m = 6, la = 4
+          const px = b.position[0] + b.velocity[0] * la * dt
+          const py = b.position[1] + b.velocity[1] * la * dt
+          const pz = b.position[2] + b.velocity[2] * la * dt
+          const dxMin = px - bounds.min.x
+          const dxMax = bounds.max.x - px
+          const dyMin = py - bounds.min.y
+          const dyMax = bounds.max.y - py
+          const dzMin = pz - bounds.min.z
+          const dzMax = bounds.max.z - pz
+          if (dxMin < m) _wall.x += ((1 - dxMin / m) ** 2) * 4
+          if (dxMax < m) _wall.x -= ((1 - dxMax / m) ** 2) * 4
+          if (dyMin < m) _wall.y += ((1 - dyMin / m) ** 2) * 4
+          if (dyMax < m) _wall.y -= ((1 - dyMax / m) ** 2) * 4
+          if (dzMin < m) _wall.z += ((1 - dzMin / m) ** 2) * 4
+          if (dzMax < m) _wall.z -= ((1 - dzMax / m) ** 2) * 4
         }
       }
 
+      // OctoBox flow
       _flow.set(0, 0, 0)
-      if (cellId >= 0) {
-        const flow = this.adapter.getCellFlow(cellId)
-        _flow.copy(flow)
+      if (cellId >= 0) _flow.copy(this.adapter.getCellFlow(cellId))
+
+      // Player avoidance
+      _avoid.set(0, 0, 0)
+      if (tc.avoidPlayerRadius > 0) {
+        const pdx = b.position[0] - playerPosition.x
+        const pdy = b.position[1] - playerPosition.y
+        const pdz = b.position[2] - playerPosition.z
+        const pd = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
+        if (pd < tc.avoidPlayerRadius && pd > 0.001) {
+          const s = (1 - pd / tc.avoidPlayerRadius) / pd
+          _avoid.set(pdx * s, pdy * s, pdz * s)
+        }
       }
 
-      _player.set(0, 0, 0)
-      const pdx = b.position[0] - playerPosition.x
-      const pdy = b.position[1] - playerPosition.y
-      const pdz = b.position[2] - playerPosition.z
-      const playerDist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
-      if (playerDist < cfg.avoidPlayerRadius && playerDist > 0.001) {
-        const strength = 1 - playerDist / cfg.avoidPlayerRadius
-        _player.set(pdx / playerDist * strength, pdy / playerDist * strength, pdz / playerDist * strength)
+      // Per-boid oscillating follow attractor ahead of the ship
+      _follow.set(0, 0, 0)
+      if (tc.followTarget !== null && predictor) {
+        const ft = tc.followTarget
+        const phase = (b.seed * 0.01 + b.age / ft.period) * Math.PI * 2
+        const t = (Math.sin(phase) + 1) * 0.5
+        const aheadSeconds = ft.minSeconds + t * (ft.maxSeconds - ft.minSeconds)
+        const predicted = predictor.predict(aheadSeconds)
+        const lateralAngle = b.seed * 6.283
+        const targetX = predicted.x
+          + Math.cos(lateralAngle) * ft.spread
+        const targetY = predicted.y
+          + Math.sin(b.seed * 2.718) * ft.spread * 0.5
+        const targetZ = predicted.z
+          + Math.sin(lateralAngle) * ft.spread
+
+        const fdx = targetX - b.position[0]
+        const fdy = targetY - b.position[1]
+        const fdz = targetZ - b.position[2]
+        const fd = Math.sqrt(fdx * fdx + fdy * fdy + fdz * fdz)
+        if (fd > 0.001) {
+          // pull proportional to distance; no hard cap so boids chase eagerly
+          const pull = Math.min(fd / 8, 2.0)
+          _follow.set(fdx / fd * pull, fdy / fd * pull, fdz / fd * pull)
+        }
       }
 
+      // Accumulate forces
       _force.set(0, 0, 0)
-      _force.addScaledVector(_sep, cfg.separationWeight)
-      _force.addScaledVector(_ali, cfg.alignmentWeight)
-      _force.addScaledVector(_coh, cfg.cohesionWeight)
-      _force.addScaledVector(_wall, cfg.wallAvoidanceWeight)
-      _force.addScaledVector(_flow, cfg.flowWeight)
-      _force.addScaledVector(_player, cfg.playerAvoidanceWeight)
-
-      const forceLen = _force.length()
-      if (forceLen > cfg.maxForce) {
-        _force.multiplyScalar(cfg.maxForce / forceLen)
+      _force.addScaledVector(_sep, tc.separationWeight)
+      _force.addScaledVector(_ali, tc.alignmentWeight)
+      _force.addScaledVector(_coh, tc.cohesionWeight)
+      _force.addScaledVector(_wall, tc.wallAvoidanceWeight)
+      _force.addScaledVector(_flow, tc.flowWeight)
+      _force.addScaledVector(_avoid, tc.playerAvoidanceWeight)
+      _force.addScaledVector(pursuit, 1.0)
+      _force.addScaledVector(flee, 1.0)
+      if (tc.followTarget !== null) {
+        _force.addScaledVector(_follow, tc.followTarget.weight)
+      }
+      if (tc.name === 'mine') {
+        this.applyMineBehavior(b, _force)
       }
 
+      const fl = _force.length()
+      if (fl > tc.maxForce) _force.multiplyScalar(tc.maxForce / fl)
+
+      // Integrate velocity with turn-rate clamp
       const vx = b.velocity[0] + _force.x * dt
       const vy = b.velocity[1] + _force.y * dt
       const vz = b.velocity[2] + _force.z * dt
-      let speed = Math.sqrt(vx * vx + vy * vy + vz * vz)
+      const newSpeed = Math.sqrt(vx * vx + vy * vy + vz * vz)
+      const prevSpeed = Math.sqrt(b.velocity[0] ** 2 + b.velocity[1] ** 2 + b.velocity[2] ** 2)
 
-      const prevVx = b.velocity[0]
-      const prevVy = b.velocity[1]
-      const prevVz = b.velocity[2]
-      if (speed > 0.001) {
-        const prevSpeed = Math.sqrt(prevVx * prevVx + prevVy * prevVy + prevVz * prevVz)
-        if (prevSpeed > 0.001) {
-          const dot = (vx * prevVx + vy * prevVy + vz * prevVz) / (speed * prevSpeed)
-          const angle = Math.acos(Math.min(1, Math.max(-1, dot)))
-          const maxAngle = cfg.turnRate * dt
-          if (angle > maxAngle) {
-            const t = maxAngle / angle
-            const nx = prevVx + (vx - prevVx) * t
-            const ny = prevVy + (vy - prevVy) * t
-            const nz = prevVz + (vz - prevVz) * t
-            b.velocity[0] = nx
-            b.velocity[1] = ny
-            b.velocity[2] = nz
-            speed = Math.sqrt(nx * nx + ny * ny + nz * nz)
-          } else {
-            b.velocity[0] = vx
-            b.velocity[1] = vy
-            b.velocity[2] = vz
-          }
+      if (newSpeed > 0.001 && prevSpeed > 0.001) {
+        const dot = (vx * b.velocity[0] + vy * b.velocity[1] + vz * b.velocity[2]) / (newSpeed * prevSpeed)
+        const angle = Math.acos(Math.min(1, Math.max(-1, dot)))
+        const maxAngle = tc.turnRate * dt
+        if (angle > maxAngle) {
+          const blend = maxAngle / angle
+          b.velocity[0] += (vx - b.velocity[0]) * blend
+          b.velocity[1] += (vy - b.velocity[1]) * blend
+          b.velocity[2] += (vz - b.velocity[2]) * blend
         } else {
-          b.velocity[0] = vx
-          b.velocity[1] = vy
-          b.velocity[2] = vz
+          b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
         }
+      } else {
+        b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
       }
 
-      speed = Math.sqrt(b.velocity[0] ** 2 + b.velocity[1] ** 2 + b.velocity[2] ** 2)
-      if (speed > cfg.maxSpeed) {
-        const s = cfg.maxSpeed / speed
-        b.velocity[0] *= s
-        b.velocity[1] *= s
-        b.velocity[2] *= s
-      } else if (speed < cfg.minSpeed && speed > 0.001) {
-        const s = cfg.minSpeed / speed
-        b.velocity[0] *= s
-        b.velocity[1] *= s
-        b.velocity[2] *= s
+      // Speed clamp
+      let spd = Math.sqrt(b.velocity[0] ** 2 + b.velocity[1] ** 2 + b.velocity[2] ** 2)
+      if (spd > tc.maxSpeed) {
+        const s = tc.maxSpeed / spd
+        b.velocity[0] *= s; b.velocity[1] *= s; b.velocity[2] *= s
+      } else if (spd < tc.minSpeed && spd > 0.001) {
+        const s = tc.minSpeed / spd
+        b.velocity[0] *= s; b.velocity[1] *= s; b.velocity[2] *= s
       }
 
       b.position[0] += b.velocity[0] * dt
       b.position[1] += b.velocity[1] * dt
       b.position[2] += b.velocity[2] * dt
 
-      if (cellId >= 0) {
+      // Hard clamp to OctoBox cell only for non-following boids to prevent tunnelling
+      if (tc.followTarget === null && cellId >= 0) {
         const bounds = this.adapter.getCellBounds(cellId)
         if (bounds) {
           b.position[0] = Math.max(bounds.min.x + 1, Math.min(bounds.max.x - 1, b.position[0]))
@@ -273,57 +328,92 @@ export class BoidsCPUSimulation {
     }
   }
 
-  private spawnAround(playerPosition: Vector3): void {
+  private trySpawn(playerPosition: Vector3): void {
     if (this.activeCount >= this.maxBoids) return
     const cfg = this.config
-    const activeCells = this.adapter.getActiveBoidCells(playerPosition, cfg.spawnRadius)
-    if (activeCells.length === 0) return
-
-    const needed = Math.min(
-      cfg.initialBoids - this.activeCount,
-      this.maxBoids - this.activeCount,
-    )
+    const needed = Math.min(cfg.initialBoids - this.activeCount, this.maxBoids - this.activeCount)
     if (needed <= 0) return
 
-    const spawnPerFrame = Math.min(needed, 20)
+    const perFrame = Math.min(needed, 20)
+    this.spawnInFreeCells(playerPosition, perFrame)
+  }
+
+  /** Spawn in random free OctoBox cells near the player. */
+  private spawnInFreeCells(playerPosition: Vector3, count: number): void {
+    const cfg = this.config
+    const cells = this.adapter.getActiveBoidCells(playerPosition, cfg.spawnRadius)
+    if (cells.length === 0) return
+
+    const countsByType = new Map<number, number>()
+    for (let i = 0; i < this.boids.length; i++) {
+      const b = this.boids[i]
+      if (b.flags === BoidFlags.DEAD) continue
+      countsByType.set(b.typeId, (countsByType.get(b.typeId) ?? 0) + 1)
+    }
+
     let spawned = 0
+    for (let attempt = 0; attempt < count * 3 && spawned < count; attempt++) {
+      let tc = cfg.boidTypes[0]
+      let bestDeficit = -Infinity
+      for (const type of cfg.boidTypes) {
+        const current = countsByType.get(type.typeId) ?? 0
+        const deficit = type.targetCount - current
+        if (deficit > bestDeficit) {
+          bestDeficit = deficit
+          tc = type
+        }
+      }
+      if (bestDeficit <= 0) break
 
-    for (let attempt = 0; attempt < spawnPerFrame * 3 && spawned < spawnPerFrame; attempt++) {
-      const cellIdx = Math.floor(Math.random() * activeCells.length)
-      const cell = activeCells[cellIdx]
-
+      const cell = cells[Math.floor(Math.random() * cells.length)]
       _v.set(
         cell.boundsMin.x + Math.random() * (cell.boundsMax.x - cell.boundsMin.x),
         cell.boundsMin.y + Math.random() * (cell.boundsMax.y - cell.boundsMin.y),
         cell.boundsMin.z + Math.random() * (cell.boundsMax.z - cell.boundsMin.z),
       )
-
-      if (_v.distanceTo(playerPosition) < cfg.avoidPlayerRadius) continue
+      if (tc.avoidPlayerRadius > 0 && _v.distanceTo(playerPosition) < tc.avoidPlayerRadius) continue
 
       const slot = this.findDeadSlot()
       if (slot < 0) break
 
       const angle = Math.random() * Math.PI * 2
       const pitch = (Math.random() - 0.5) * 0.5
-      const spd = cfg.minSpeed + Math.random() * (cfg.maxSpeed - cfg.minSpeed) * 0.5
-
-      this.boids[slot].position[0] = _v.x
-      this.boids[slot].position[1] = _v.y
-      this.boids[slot].position[2] = _v.z
-      this.boids[slot].velocity[0] = Math.cos(angle) * Math.cos(pitch) * spd
-      this.boids[slot].velocity[1] = Math.sin(pitch) * spd
-      this.boids[slot].velocity[2] = Math.sin(angle) * Math.cos(pitch) * spd
-      this.boids[slot].seed = Math.random() * 65536
-      this.boids[slot].typeId = 0
-      this.boids[slot].life = 0
-      this.boids[slot].cellId = cell.id
-      this.boids[slot].flags = BoidFlags.SPAWNING
-      this.boids[slot].age = 0
-
-      this.activeCount++
-      this.spawnCount++
+      const spd = tc.minSpeed + Math.random() * (tc.maxSpeed - tc.minSpeed) * 0.5
+      this.initBoid(
+        slot,
+        _v.x,
+        _v.y,
+        _v.z,
+        Math.cos(angle) * Math.cos(pitch) * spd,
+        Math.sin(pitch) * spd,
+        Math.sin(angle) * Math.cos(pitch) * spd,
+        tc.typeId,
+        cell.id,
+      )
+      countsByType.set(tc.typeId, (countsByType.get(tc.typeId) ?? 0) + 1)
       spawned++
     }
+  }
+
+  private initBoid(
+    slot: number,
+    px: number, py: number, pz: number,
+    vx: number, vy: number, vz: number,
+    typeId: number, cellId: number,
+  ): void {
+    const b = this.boids[slot]
+    b.position[0] = px; b.position[1] = py; b.position[2] = pz
+    b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
+    b.seed = Math.random() * 65536
+    b.typeId = typeId
+    b.behavior = BoidBehavior.NONE
+    b.stateTimer = 0
+    b.life = 0
+    b.cellId = cellId
+    b.flags = BoidFlags.SPAWNING
+    b.age = 0
+    this.activeCount++
+    this.spawnCount++
   }
 
   private findDeadSlot(): number {
@@ -333,30 +423,171 @@ export class BoidsCPUSimulation {
     return -1
   }
 
-  private buildConnectedSet(cellId: number): Set<number> | null {
-    if (cellId < 0) return null
-    const connected = new Set<number>()
-    connected.add(cellId)
-    const neighbors = this.adapter.getConnectedNeighborCellIds(cellId)
-    for (let i = 0; i < neighbors.length; i++) {
-      connected.add(neighbors[i])
+  getStats() { return { spawnCount: this.spawnCount, despawnCount: this.despawnCount } }
+  resetStats(): void { this.spawnCount = 0; this.despawnCount = 0 }
+  dispose(): void { this.boids.length = 0 }
+
+  private applyMineBehavior(b: BoidState, force: Vector3): void {
+    const currentPos = _v.set(b.position[0], b.position[1], b.position[2])
+    const currentVel = _target.set(b.velocity[0], b.velocity[1], b.velocity[2])
+
+    if (b.behavior === BoidBehavior.IDLE) {
+      const t = b.age + b.seed * 0.01
+      _wander.set(
+        Math.sin(t * 0.7) * 0.9,
+        Math.cos(t * 0.5) * 0.45,
+        Math.sin(t * 0.9) * 0.9,
+      )
+      force.addScaledVector(_wander, 2.3)
+      return
     }
-    return connected
-  }
 
-  getStats() {
-    return {
-      spawnCount: this.spawnCount,
-      despawnCount: this.despawnCount,
+    _follow.copy(this.lastPlayerPos).sub(currentPos)
+    const distance = _follow.length()
+    if (distance <= 0.0001) return
+    _follow.multiplyScalar(1 / distance)
+    _avoid.copy(this.lastPlayerVel).sub(currentVel)
+    const closingSpeed = Math.max(_avoid.dot(_follow), 0.001)
+    const leadTime = Math.min(2.5, Math.max(0.15, distance / closingSpeed))
+    _target.copy(this.lastPlayerPos).addScaledVector(this.lastPlayerVel, leadTime)
+    _target.sub(currentPos)
+    if (_target.lengthSq() <= 0.0001) return
+    _target.normalize()
+
+    if (b.behavior === BoidBehavior.TARGETING) {
+      const elapsed = GAME_CONFIG.mines.telegraphDuration - Math.max(0, b.stateTimer)
+      const progress = Math.max(0, Math.min(1, GAME_CONFIG.mines.telegraphDuration > 0 ? elapsed / GAME_CONFIG.mines.telegraphDuration : 1))
+      const ease = progress * progress * (3 - 2 * progress)
+      const desiredSpeed = MINE_TARGETING_MAX_SPEED * ease
+      _target.multiplyScalar(desiredSpeed)
+      _target.sub(currentVel)
+      const steerLen = _target.length()
+      if (steerLen > MINE_TARGETING_ACCEL) {
+        _target.multiplyScalar(MINE_TARGETING_ACCEL / steerLen)
+      }
+      force.add(_target)
+      return
+    }
+
+    if (b.behavior === BoidBehavior.ROCKET) {
+      force.addScaledVector(_target, GAME_CONFIG.mines.rocketAcceleration * 18)
+      return
+    }
+
+    if (b.behavior === BoidBehavior.LAUNCHED) {
+      const desiredSpeed = GAME_CONFIG.mines.launchSpeed
+      _target.multiplyScalar(desiredSpeed)
+      _target.sub(currentVel)
+      force.addScaledVector(_target, 1.8)
     }
   }
 
-  resetStats(): void {
-    this.spawnCount = 0
-    this.despawnCount = 0
+  upsertKinematicBoid(
+    id: string,
+    px: number,
+    py: number,
+    pz: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    typeId: number,
+    cellId: number,
+  ): void {
+    let slot = this.externalSlots.get(id) ?? -1
+    if (slot < 0) {
+      slot = this.findDeadSlot()
+      if (slot < 0) return
+      this.externalSlots.set(id, slot)
+      this.activeCount++
+    }
+    const b = this.boids[slot]
+    b.position[0] = px; b.position[1] = py; b.position[2] = pz
+    b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
+    b.seed = slot + typeId * 1024
+    b.typeId = typeId
+    b.behavior = BoidBehavior.NONE
+    b.stateTimer = 0
+    b.life = 1
+    b.cellId = cellId
+    b.flags = BoidFlags.KINEMATIC
+    this.dirtyExternalSlots.add(slot)
   }
 
-  dispose(): void {
-    this.boids.length = 0
+  upsertManagedBoid(
+    id: string,
+    px: number,
+    py: number,
+    pz: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    typeId: number,
+    behavior: BoidBehavior,
+    stateTimer: number,
+    cellId: number,
+  ): void {
+    let slot = this.externalSlots.get(id) ?? -1
+    if (slot < 0) {
+      slot = this.findDeadSlot()
+      if (slot < 0) return
+      this.externalSlots.set(id, slot)
+      this.activeCount++
+    }
+    const b = this.boids[slot]
+    b.position[0] = px; b.position[1] = py; b.position[2] = pz
+    b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
+    b.seed = b.seed || slot + typeId * 1024
+    b.typeId = typeId
+    b.behavior = behavior
+    b.stateTimer = stateTimer
+    b.life = 1
+    b.cellId = cellId
+    b.flags = BoidFlags.ACTIVE
+    this.dirtyExternalSlots.add(slot)
   }
+
+  updateManagedBoid(id: string, behavior: BoidBehavior, stateTimer: number): void {
+    const slot = this.externalSlots.get(id)
+    if (slot === undefined) return
+    const b = this.boids[slot]
+    b.behavior = behavior
+    b.stateTimer = stateTimer
+    if (b.flags === BoidFlags.KINEMATIC) b.flags = BoidFlags.ACTIVE
+    this.dirtyExternalSlots.add(slot)
+  }
+
+  getManagedBoid(id: string): BoidState | null {
+    const slot = this.externalSlots.get(id)
+    return slot === undefined ? null : this.boids[slot]
+  }
+
+  removeKinematicBoid(id: string): void {
+    const slot = this.externalSlots.get(id)
+    if (slot === undefined) return
+    this.externalSlots.delete(id)
+    const b = this.boids[slot]
+    b.life = 0
+    b.cellId = -1
+    b.flags = BoidFlags.DEAD
+    this.dirtyExternalSlots.add(slot)
+    this.activeCount = Math.max(0, this.activeCount - 1)
+  }
+
+  consumeDirtyExternalBoids(): Array<{ slot: number; boid: BoidState }> {
+    const dirty: Array<{ slot: number; boid: BoidState }> = []
+    for (const slot of this.dirtyExternalSlots) {
+      dirty.push({ slot, boid: this.boids[slot] })
+    }
+    this.dirtyExternalSlots.clear()
+    return dirty
+  }
+}
+
+function buildConnectedSet(adapter: BoidsOctoBoxAdapter, cellId: number): Set<number> | null {
+  if (cellId < 0) return null
+  const s = new Set<number>()
+  s.add(cellId)
+  const n = adapter.getConnectedNeighborCellIds(cellId)
+  for (let i = 0; i < n.length; i++) s.add(n[i])
+  return s
 }

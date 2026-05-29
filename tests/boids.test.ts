@@ -4,7 +4,7 @@ import { BoidsSpatialGrid } from '../src/boids/BoidsSpatialGrid'
 import { BoidsOctoBoxAdapter } from '../src/boids/BoidsOctoBoxAdapter'
 import { BoidsCPUSimulation } from '../src/boids/BoidsCPUSimulation'
 import { DEFAULT_BOIDS_CONFIG } from '../src/boids/BoidsConfig'
-import { BoidFlags } from '../src/boids/BoidsTypes'
+import { BoidBehavior, BoidFlags } from '../src/boids/BoidsTypes'
 import type { BoidState } from '../src/boids/BoidsTypes'
 import type { ChunkData, LeafCell, AABB } from '../src/game/types'
 
@@ -48,9 +48,9 @@ describe('BoidsSpatialGrid', () => {
   it('inserts and queries neighbors within radius', () => {
     const grid = new BoidsSpatialGrid(18)
     const boids: BoidState[] = [
-      { position: [10, 10, 10], velocity: [1, 0, 0], seed: 0, typeId: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
-      { position: [12, 10, 10], velocity: [1, 0, 0], seed: 1, typeId: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
-      { position: [100, 100, 100], velocity: [1, 0, 0], seed: 2, typeId: 0, life: 1, cellId: 1, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [10, 10, 10], velocity: [1, 0, 0], seed: 0, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [12, 10, 10], velocity: [1, 0, 0], seed: 1, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [100, 100, 100], velocity: [1, 0, 0], seed: 2, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 1, flags: BoidFlags.ACTIVE, age: 0 },
     ]
 
     grid.clear()
@@ -65,8 +65,8 @@ describe('BoidsSpatialGrid', () => {
   it('respects connected cell filter', () => {
     const grid = new BoidsSpatialGrid(18)
     const boids: BoidState[] = [
-      { position: [10, 10, 10], velocity: [1, 0, 0], seed: 0, typeId: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
-      { position: [12, 10, 10], velocity: [1, 0, 0], seed: 1, typeId: 0, life: 1, cellId: 1, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [10, 10, 10], velocity: [1, 0, 0], seed: 0, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [12, 10, 10], velocity: [1, 0, 0], seed: 1, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 1, flags: BoidFlags.ACTIVE, age: 0 },
     ]
 
     grid.clear()

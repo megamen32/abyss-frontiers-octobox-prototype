@@ -194,6 +194,7 @@ export interface InputState {
   right: number;
   vertical: number;
   boost: boolean;
+  brake: boolean;
   accelerationAdjust: number;
   dragAdjust: number;
   turnAdjust: number;
@@ -203,6 +204,8 @@ export interface InputState {
   fogTogglePressed: boolean;
   debugUiTogglePressed: boolean;
   pausePressed: boolean;
+  autopilotTogglePressed: boolean;
+  cameraYaw: number;
 }
 
 export interface CameraState {
