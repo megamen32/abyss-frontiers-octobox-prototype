@@ -1,6 +1,8 @@
+import { GAME_CONFIG } from '../config';
 import type { ChunkCoord, DebugTimingSnapshot } from '../types';
 import type { RuntimeFlightTuning } from '../simulation/runtimeTuning';
 import type { BoidsDebugStats } from '../../boids/BoidsTypes';
+import { FpsPanel } from '../../ui/FpsPanel';
 
 interface HudSnapshot {
   hp: number;
@@ -27,10 +29,19 @@ interface HudSnapshot {
   dead: boolean;
   paused: boolean;
   boidsDebug?: BoidsDebugStats;
+  autopilot: boolean;
+  virtualJoystickEnabled: boolean;
 }
 
+const JS_DEADZONE = GAME_CONFIG.virtualJoystick.deadzone;
+const JS_MAX_TRAVEL = GAME_CONFIG.virtualJoystick.maxTravel;
+
 export class Hud {
-  private readonly root: HTMLDivElement;
+  readonly root: HTMLDivElement;
+  /** Normalised joystick axes, updated every touch frame. */
+  joystickForward = 0;
+  joystickRight = 0;
+  joystickVertical = 0;
 
   private readonly depthValue = document.createElement('span');
   private readonly depthBandEl = document.createElement('span');
@@ -41,6 +52,7 @@ export class Hud {
   private readonly lootValue = document.createElement('span');
 
   private readonly debugPanel = document.createElement('div');
+  private readonly fpsPanel = new FpsPanel();
   private readonly debugContent = document.createElement('div');
   private readonly debugTimings = document.createElement('div');
   private readonly debugTuning = document.createElement('div');
@@ -48,10 +60,20 @@ export class Hud {
   private readonly keyHints = document.createElement('div');
 
   private readonly restartButton = document.createElement('button');
+  private readonly menuButton = document.createElement('button');
   private readonly deathOverlay = document.createElement('div');
   private readonly pauseOverlay = document.createElement('div');
+  private readonly joystickEl = document.createElement('div');
+  private readonly joystickThumb = document.createElement('div');
+  private readonly verticalUpBtn = document.createElement('button');
+  private readonly verticalDownBtn = document.createElement('button');
 
   private onRestart: (() => void) | null = null;
+  private onPause: (() => void) | null = null;
+  private onToggleJoystick: ((enabled: boolean) => void) | null = null;
+  private joystickTouchId: number | null = null;
+  private joystickBaseRect: DOMRect | null = null;
+  private joystickVisible = false;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -108,19 +130,24 @@ export class Hud {
     this.debugTimings.className = 'debug-line';
     this.debugTuning.className = 'debug-line';
     this.debugBoids.className = 'debug-line';
-    this.debugPanel.append(this.debugContent, this.debugTimings, this.debugTuning, this.debugBoids);
+    this.debugPanel.append(this.fpsPanel.root, this.debugContent, this.debugTimings, this.debugTuning, this.debugBoids);
 
     this.keyHints.className = 'key-hints';
-    this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause';
+    this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause  B autopilot';
 
     topLeft.append(playerCard, this.debugPanel, this.keyHints);
 
     const bottomRight = document.createElement('div');
     bottomRight.className = 'hud-br';
+
+    this.menuButton.className = 'menu-btn';
+    this.menuButton.textContent = 'Menu';
+    this.menuButton.addEventListener('click', () => this.onPause?.());
+
     this.restartButton.className = 'restart-btn';
     this.restartButton.textContent = 'Restart';
     this.restartButton.addEventListener('click', () => this.onRestart?.());
-    bottomRight.append(this.restartButton);
+    bottomRight.append(this.menuButton, this.restartButton);
 
     this.deathOverlay.className = 'death-overlay';
     this.deathOverlay.style.display = 'none';
@@ -140,18 +167,165 @@ export class Hud {
       <div class="pause-card">
         <h2>Paused</h2>
         <p>Press Escape to resume</p>
+        <label class="menu-row">
+          <span>Virtual Joystick</span>
+          <input type="checkbox" class="menu-toggle" checked />
+        </label>
       </div>
     `;
 
-    this.root.append(topLeft, bottomRight, this.deathOverlay, this.pauseOverlay);
+    this.joystickEl.className = 'joystick-base';
+    this.joystickThumb.className = 'joystick-thumb';
+    this.joystickEl.append(this.joystickThumb);
+
+    this.verticalUpBtn.className = 'vertical-btn up';
+    this.verticalUpBtn.textContent = '▲';
+    this.verticalDownBtn.className = 'vertical-btn down';
+    this.verticalDownBtn.textContent = '▼';
+
+    this.root.append(topLeft, bottomRight, this.deathOverlay, this.pauseOverlay, this.joystickEl, this.verticalUpBtn, this.verticalDownBtn);
     parent.append(this.root);
+
+    const pauseToggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
+    if (pauseToggle) {
+      pauseToggle.addEventListener('change', () => {
+        this.setJoystickVisible(pauseToggle.checked);
+        this.onToggleJoystick?.(pauseToggle.checked);
+      });
+    }
+
+    this.setupJoystickTouch();
+    this.setupVerticalButtons();
   }
 
-  setCallbacks(callbacks: { onRestart: () => void }): void {
+  setCallbacks(callbacks: { onRestart: () => void; onPause?: () => void; onToggleJoystick?: (enabled: boolean) => void }): void {
     this.onRestart = callbacks.onRestart;
+    this.onPause = callbacks.onPause ?? null;
+    this.onToggleJoystick = callbacks.onToggleJoystick ?? null;
+  }
+
+  setJoystickVisible(visible: boolean): void {
+    this.joystickVisible = visible;
+    this.joystickEl.style.display = visible ? 'block' : 'none';
+    this.verticalUpBtn.style.display = visible ? 'block' : 'none';
+    this.verticalDownBtn.style.display = visible ? 'block' : 'none';
+    const toggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
+    if (toggle) toggle.checked = visible;
+  }
+
+  syncMenuToggle(checked: boolean): void {
+    const toggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
+    if (toggle) toggle.checked = checked;
+  }
+
+  private setupJoystickTouch(): void {
+    const onStart = (e: TouchEvent) => {
+      if (this.joystickTouchId !== null) return;
+      for (const touch of e.changedTouches) {
+        const rect = this.joystickEl.getBoundingClientRect();
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        if (Math.abs(touch.clientX - cx) < rect.width * 0.5 && Math.abs(touch.clientY - cy) < rect.height * 0.5) {
+          this.joystickTouchId = touch.identifier;
+          this.joystickBaseRect = rect;
+          this.updateJoystick(touch);
+          e.preventDefault();
+          return;
+        }
+      }
+    };
+    const onMove = (e: TouchEvent) => {
+      if (this.joystickTouchId === null) return;
+      for (const touch of e.changedTouches) {
+        if (touch.identifier === this.joystickTouchId) {
+          this.updateJoystick(touch);
+          e.preventDefault();
+          return;
+        }
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (this.joystickTouchId === null) return;
+      for (const touch of e.changedTouches) {
+        if (touch.identifier === this.joystickTouchId) {
+          this.joystickTouchId = null;
+          this.joystickBaseRect = null;
+          this.joystickForward = 0;
+          this.joystickRight = 0;
+          this.joystickThumb.style.transform = 'translate(-50%, -50%)';
+          e.preventDefault();
+          return;
+        }
+      }
+    };
+    this.root.addEventListener('touchstart', onStart, { passive: false });
+    this.root.addEventListener('touchmove', onMove, { passive: false });
+    this.root.addEventListener('touchend', onEnd);
+    this.root.addEventListener('touchcancel', onEnd);
+  }
+
+  private updateJoystick(touch: Touch): void {
+    const rect = this.joystickBaseRect;
+    if (!rect) return;
+    const cx = rect.left + rect.width * 0.5;
+    const cy = rect.top + rect.height * 0.5;
+    let dx = touch.clientX - cx;
+    let dy = -(touch.clientY - cy);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const maxDist = JS_MAX_TRAVEL;
+    let clampedDist = Math.min(dist, maxDist);
+    if (dist > 0.001) {
+      const scale = clampedDist / dist;
+      dx *= scale;
+      dy *= scale;
+    }
+    this.joystickThumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${-dy}px))`;
+    let normalX = dx / maxDist;
+    let normalY = dy / maxDist;
+    const deadLen = Math.sqrt(normalX * normalX + normalY * normalY);
+    if (deadLen < JS_DEADZONE) {
+      normalX = 0;
+      normalY = 0;
+    } else {
+      const s = (deadLen - JS_DEADZONE) / (1 - JS_DEADZONE);
+      normalX = (normalX / deadLen) * s;
+      normalY = (normalY / deadLen) * s;
+    }
+    this.joystickForward = Math.max(-1, Math.min(1, normalY));
+    this.joystickRight = Math.max(-1, Math.min(1, -normalX));
+  }
+
+  private setupVerticalButtons(): void {
+    const pressed = new Set<number>();
+    const onStart = (e: TouchEvent) => {
+      for (const touch of e.changedTouches) {
+        const el = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (el === this.verticalUpBtn || this.verticalUpBtn.contains(el)) {
+          pressed.add(touch.identifier);
+          this.joystickVertical = 1;
+          e.preventDefault();
+        } else if (el === this.verticalDownBtn || this.verticalDownBtn.contains(el)) {
+          pressed.add(touch.identifier);
+          this.joystickVertical = -1;
+          e.preventDefault();
+        }
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      for (const touch of e.changedTouches) {
+        pressed.delete(touch.identifier);
+      }
+      if (pressed.size === 0) this.joystickVertical = 0;
+    };
+    this.root.addEventListener('touchstart', onStart, { passive: false });
+    this.root.addEventListener('touchend', onEnd);
+    this.root.addEventListener('touchcancel', onEnd);
   }
 
   render(s: HudSnapshot): void {
+    if (s.virtualJoystickEnabled !== this.joystickVisible) {
+      this.setJoystickVisible(s.virtualJoystickEnabled);
+    }
     this.depthValue.textContent = `${Math.max(0, s.depth).toFixed(0)}m`;
     this.depthBandEl.textContent = s.depthBand;
     this.depthGaugeFill.style.setProperty('--fill', `${(s.dangerLevel * 100).toFixed(1)}%`);
@@ -171,10 +345,11 @@ export class Hud {
     const showDebug = s.debugEnabled && s.debugUiVisible;
     this.debugPanel.style.display = showDebug ? 'block' : 'none';
     this.keyHints.style.display = s.debugEnabled ? 'block' : 'none';
+    this.fpsPanel.record(s.fps);
+    this.fpsPanel.setVisible(showDebug);
 
     if (showDebug) {
       this.debugContent.textContent =
-        `${s.fps.toFixed(0)} fps  ` +
         `${s.speed.toFixed(1)} spd  ` +
         `${s.driftAngleDeg.toFixed(0)}° drift  ` +
         `seed ${s.seed}  ` +
@@ -183,7 +358,8 @@ export class Hud {
         `budget ${s.spawnBudget}  ` +
         `avg ${s.averageFps.toFixed(1)}  ` +
         `fog ${s.fogEnabled ? 'ON' : 'OFF'}  ` +
-        `chunkdbg ${s.chunkDebugEnabled ? 'ON' : 'OFF'}`;
+        `chunkdbg ${s.chunkDebugEnabled ? 'ON' : 'OFF'}  ` +
+        `autopilot ${s.autopilot ? 'ON' : 'OFF'}`;
       this.debugTimings.textContent =
         `frame ${s.timings.frameMs.toFixed(1)}  ` +
         `sim ${s.timings.simulationMs.toFixed(1)}  ` +

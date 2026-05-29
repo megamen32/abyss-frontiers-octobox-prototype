@@ -321,6 +321,15 @@ export const GAME_CONFIG = {
     rimThickness: 0.18,
   },
 
+  virtualJoystick: {
+    // Whether the virtual joystick is shown on touch devices.
+    enabled: true,
+    // Deadzone fraction [0-1] of the joystick radius.
+    deadzone: 0.18,
+    // Maximum distance (CSS px) the thumb can travel from center.
+    maxTravel: 52,
+  },
+
   gamepad: {
     leftStickDeadzone: 0.15,
     rightStickDeadzone: 0.15,

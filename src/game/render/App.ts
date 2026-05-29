@@ -279,6 +279,7 @@ export class RenderApp {
     averageFps: number;
     timings: DebugTimingSnapshot;
     autopilot: boolean;
+    virtualJoystickEnabled: boolean;
   }): void {
     const renderTimings: DebugTimingSnapshot = { ...frame.timings };
     const renderStart = performance.now();
@@ -461,6 +462,7 @@ export class RenderApp {
       dead: !frame.player.alive,
       paused: frame.paused,
       autopilot: frame.autopilot,
+      virtualJoystickEnabled: frame.virtualJoystickEnabled,
       boidsDebug: this.boids?.debug,
     });
   }

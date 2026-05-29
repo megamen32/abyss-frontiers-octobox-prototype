@@ -8,6 +8,7 @@ import { overlapsObstacle, resolvePlayerCaveCollision, resolvePlayerObstacleColl
 import { InputController } from './input';
 import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
+import { AutopilotBot } from './autopilot';
 import { applyRuntimeTuning } from './runtimeTuning';
 import { applyKeyboardSteering } from './steering';
 import { ShipPredictor } from './shipPredictor';
@@ -16,6 +17,34 @@ import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
 import { BoidsSystem } from '../../boids/BoidsSystem';
+import { BoidBehavior } from '../../boids/BoidsTypes';
+import { MINE_TYPE, UNIFIED_WORLD_BOIDS_CONFIG } from '../../boids/BoidsConfig';
+
+const DEBUG_SETTINGS_KEYS = {
+  debugEnabled: 'abyss3.debugEnabled',
+  debugUiVisible: 'abyss3.debugUiVisible',
+  chunkDebugEnabled: 'abyss3.chunkDebugEnabled',
+  fogEnabled: 'abyss3.fogEnabled',
+  autopilot: 'abyss3.autopilot',
+  virtualJoystickEnabled: 'abyss3.virtualJoystickEnabled',
+} as const;
+
+function readStoredBool(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBool(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    return;
+  }
+}
 
 export class Game {
   private readonly input = new InputController(window);
@@ -30,25 +59,47 @@ export class Game {
   private player = createInitialPlayerState();
   private currentChunk = { x: 0, y: 0, z: 0 };
   private running = false;
-  private debugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
-  private debugUiVisible: boolean = GAME_CONFIG.visuals.debugEnabled;
-  private chunkDebugEnabled: boolean = GAME_CONFIG.visuals.debugEnabled;
-  private fogEnabled = true;
+  private debugEnabled!: boolean;
+  private debugUiVisible!: boolean;
+  private chunkDebugEnabled!: boolean;
+  private fogEnabled!: boolean;
   private lastFrameTime = 0;
   private fps = 60;
   private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
-  private readonly boids = new BoidsSystem();
+  private readonly boids = new BoidsSystem(UNIFIED_WORLD_BOIDS_CONFIG);
+  private readonly mineBoidIdsByChunk = new Map<string, Set<string>>();
+  private readonly autopilot = new AutopilotBot();
+  private virtualJoystickEnabled = false;
 
   constructor(root: HTMLElement) {
+    this.debugEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.debugEnabled, GAME_CONFIG.visuals.debugEnabled);
+    this.debugUiVisible = readStoredBool(DEBUG_SETTINGS_KEYS.debugUiVisible, GAME_CONFIG.visuals.debugEnabled);
+    this.chunkDebugEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.chunkDebugEnabled, GAME_CONFIG.visuals.debugEnabled);
+    this.fogEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.fogEnabled, true);
+    if (readStoredBool(DEBUG_SETTINGS_KEYS.autopilot, false)) {
+      this.autopilot.setEnabled(true);
+    }
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    this.virtualJoystickEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.virtualJoystickEnabled, isTouchDevice && GAME_CONFIG.virtualJoystick.enabled);
     this.render = new RenderApp(root);
     this.render.setDebugEnabled(this.debugEnabled);
     this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
+    this.render.setDebugUiVisible(this.debugUiVisible);
     this.render.setFogEnabled(this.fogEnabled);
     this.render.hud.setCallbacks({
       onRestart: () => this.restart(),
+      onPause: () => this.togglePause(),
+      onToggleJoystick: (enabled) => {
+        this.virtualJoystickEnabled = enabled;
+        writeStoredBool(DEBUG_SETTINGS_KEYS.virtualJoystickEnabled, enabled);
+      },
     });
+    if (this.virtualJoystickEnabled) {
+      this.render.hud.setJoystickVisible(true);
+    }
+    this.render.hud.syncMenuToggle(this.virtualJoystickEnabled);
     this.render.addBoids(this.boids);
   }
 
@@ -57,11 +108,14 @@ export class Game {
     const initial = this.chunkManager.syncAround(this.player.position, travelDirection(this.player), this.player.speed);
     this.currentChunk = initial.currentCoord;
     this.render.syncChunks(initial.added, initial.removed);
+    this.boids.syncChunks(initial.added, initial.removed);
+    this.syncChunkMineBoids(initial.added, initial.removed);
     requestAnimationFrame(this.loop);
   }
 
   private restart(): void {
     const oldKeys = [...this.chunkManager.activeChunks.keys()];
+    this.syncChunkMineBoids([], oldKeys);
     this.chunkManager.dispose();
     this.player = createInitialPlayerState();
     this.spawnBudget.reset();
@@ -72,31 +126,32 @@ export class Game {
     this.currentChunk = initial.currentCoord;
     this.render.syncChunks(initial.added, initial.removed);
     this.boids.syncChunks(initial.added, initial.removed);
+    this.syncChunkMineBoids(initial.added, initial.removed);
   }
 
   private toggleDebug(): void {
     this.debugEnabled = !this.debugEnabled;
     this.render.setDebugEnabled(this.debugEnabled);
-    if (!this.debugEnabled) {
-      this.debugUiVisible = false;
-      this.render.setDebugUiVisible(false);
-    }
+    this.persistDebugSettings();
   }
 
   private toggleDebugUi(): void {
     if (!this.debugEnabled) return;
     this.debugUiVisible = !this.debugUiVisible;
     this.render.setDebugUiVisible(this.debugUiVisible);
+    this.persistDebugSettings();
   }
 
   private toggleChunkDebug(): void {
     this.chunkDebugEnabled = !this.chunkDebugEnabled;
     this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
+    this.persistDebugSettings();
   }
 
   private toggleFog(): void {
     this.fogEnabled = !this.fogEnabled;
     this.render.setFogEnabled(this.fogEnabled);
+    this.persistDebugSettings();
   }
 
   private togglePause(): void {
@@ -114,6 +169,11 @@ export class Game {
     this.fps = 1 / rawDt;
 
     const inputStart = performance.now();
+    this.input.setTouchInput(
+      this.render.hud.joystickForward,
+      this.render.hud.joystickRight,
+      this.render.hud.joystickVertical,
+    );
     const input = this.input.sample();
     if (input.restartPressed) {
       this.restart();
@@ -133,12 +193,26 @@ export class Game {
     if (input.pausePressed) {
       this.togglePause();
     }
+    if (input.autopilotTogglePressed) {
+      this.autopilot.toggle();
+      this.persistDebugSettings();
+    }
     this.profiler.addSample('inputMs', performance.now() - inputStart);
+    this.render.applyGamepadCameraYaw(input.cameraYaw * dt);
 
-    let tuning = applyRuntimeTuning(input);
+    const effectiveInput = this.autopilot.computeInput(
+      this.player,
+      this.chunkManager.activeChunks.values(),
+      dt,
+    ) ?? input;
+
+    let tuning = applyRuntimeTuning(effectiveInput);
     if (!this.paused) {
       const simulationStart = performance.now();
-      applyKeyboardSteering(this.player, input, dt);
+      applyKeyboardSteering(this.player, effectiveInput, dt);
+      if (effectiveInput.brake) {
+        this.player.velocity.multiplyScalar(Math.max(0, 1 - GAME_CONFIG.ship.brakeDrag * dt));
+      }
       updatePlayer(this.player, dt);
       this.profiler.addSample('simulationMs', performance.now() - simulationStart);
 
@@ -160,6 +234,7 @@ export class Game {
       this.currentChunk = sync.currentCoord;
       this.render.syncChunks(sync.added, sync.removed);
       this.boids.syncChunks(sync.added, sync.removed);
+      this.syncChunkMineBoids(sync.added, sync.removed);
       this.profiler.addSample('chunkSyncMs', performance.now() - chunkSyncStart);
 
       const worldStart = performance.now();
@@ -170,7 +245,8 @@ export class Game {
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const predictor = ShipPredictor.forPlayer(this.player);
-    this.boids.update(dt, this.render.getCameraPosition(), this.player.position);
+    this.boids.update(dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
+    this.syncMineStateFromBoids();
     const renderStart = performance.now();
     this.render.updateFrame({
       paused: this.paused,
@@ -193,6 +269,8 @@ export class Game {
         ...this.profiler.snapshot(),
         ...this.chunkManager.consumeDebugTimings(),
       },
+      autopilot: this.autopilot.isEnabled(),
+      virtualJoystickEnabled: this.virtualJoystickEnabled,
     });
     this.profiler.addSample('renderMs', performance.now() - renderStart);
     this.profiler.addSample('frameMs', performance.now() - frameStart);
@@ -265,6 +343,7 @@ export class Game {
     for (const mine of chunk.mines) {
       if (mineHitsPlayer(mine, this.player)) {
         mine.state = 'dead';
+        this.boids.removeManagedBoid(mine.id);
         applyDamage(this.player, mine.damage);
         if (!this.player.alive) {
           return;
@@ -275,6 +354,61 @@ export class Game {
 
   private updateMines(chunk: ChunkData, dt: number): void {
     updateMinesInChunk(chunk, this.player, dt);
+    this.syncMineBoids(chunk);
+  }
+
+  private syncChunkMineBoids(added: ChunkData[], removed: string[]): void {
+    for (const key of removed) {
+      const ids = this.mineBoidIdsByChunk.get(key)
+      if (!ids) continue
+      for (const id of ids) {
+        this.boids.removeManagedBoid(id)
+      }
+      this.mineBoidIdsByChunk.delete(key)
+    }
+    for (const chunk of added) {
+      this.syncMineBoids(chunk)
+    }
+  }
+
+  private syncMineBoids(chunk: ChunkData): void {
+    let ids = this.mineBoidIdsByChunk.get(chunk.key)
+    if (!ids) {
+      ids = new Set<string>()
+      this.mineBoidIdsByChunk.set(chunk.key, ids)
+    }
+    ids.clear()
+    for (const mine of chunk.mines) {
+      if (mine.state === 'dead') {
+        this.boids.removeManagedBoid(mine.id)
+        continue
+      }
+      this.boids.upsertManagedBoid(
+        mine.id,
+        mine.position,
+        mine.velocity,
+        MINE_TYPE.typeId,
+        mineBehavior(mine.state),
+        mine.telegraphTimer,
+      )
+      ids.add(mine.id)
+    }
+  }
+
+  private syncMineStateFromBoids(): void {
+    for (const chunk of this.chunkManager.activeChunks.values()) {
+      for (const mine of chunk.mines) {
+        if (mine.state === 'dead') {
+          continue;
+        }
+        const boid = this.boids.getManagedBoid(mine.id);
+        if (!boid) {
+          continue;
+        }
+        mine.position.set(boid.position[0], boid.position[1], boid.position[2]);
+        mine.velocity.set(boid.velocity[0], boid.velocity[1], boid.velocity[2]);
+      }
+    }
   }
 
   private getChunksWithinRadius(radius: number): ChunkData[] {
@@ -365,6 +499,24 @@ export class Game {
         Math.max(start.z, end.z) + padding,
       ),
     };
+  }
+
+  private persistDebugSettings(): void {
+    writeStoredBool(DEBUG_SETTINGS_KEYS.debugEnabled, this.debugEnabled);
+    writeStoredBool(DEBUG_SETTINGS_KEYS.debugUiVisible, this.debugUiVisible);
+    writeStoredBool(DEBUG_SETTINGS_KEYS.chunkDebugEnabled, this.chunkDebugEnabled);
+    writeStoredBool(DEBUG_SETTINGS_KEYS.fogEnabled, this.fogEnabled);
+    writeStoredBool(DEBUG_SETTINGS_KEYS.autopilot, this.autopilot.isEnabled());
+  }
+}
+
+function mineBehavior(state: ChunkData['mines'][number]['state']): BoidBehavior {
+  switch (state) {
+    case 'idle': return BoidBehavior.IDLE;
+    case 'targeting': return BoidBehavior.TARGETING;
+    case 'rocket': return BoidBehavior.ROCKET;
+    case 'launched': return BoidBehavior.LAUNCHED;
+    case 'dead': return BoidBehavior.NONE;
   }
 }
 
