@@ -23,6 +23,28 @@ interface ChunkProfileSummary {
   caveChunks: number;
   averages: Record<string, number>;
   maximums: Record<string, number>;
+  maxBreakdown: ChunkSlowBreakdown;
+}
+
+interface ChunkSlowBreakdown {
+  coord: ChunkCoord;
+  totalMs: number;
+  octoboxMs: number;
+  octoboxFieldSampleMs: number;
+  octoboxNodesVisited: number;
+  octoboxLeavesGenerated: number;
+  skeletonCandidatesTested: number;
+  adjacencyBuildMs: number;
+  cells: number;
+  staticMeshMs: number;
+  serializeMs: number;
+}
+
+interface ChunkProfileReport {
+  generatedAt: string;
+  samples: ChunkProfileSample[];
+  summary: ChunkProfileSummary[];
+  topSlowChunks: ChunkSlowBreakdown[];
 }
 
 describe('Chunk profiling', () => {
@@ -86,11 +108,18 @@ describe('Chunk profiling', () => {
     }
 
     const summary = summarize(samples);
+    const topSlowChunks = buildTopSlowChunks(samples, 10);
     const outputDirectory = resolve(process.cwd(), 'artifacts/performance');
+    const report: ChunkProfileReport = {
+      generatedAt: new Date().toISOString(),
+      samples,
+      summary,
+      topSlowChunks,
+    };
     await mkdir(outputDirectory, { recursive: true });
     await writeFile(
       resolve(outputDirectory, 'chunk-profile.json'),
-      `${JSON.stringify({ generatedAt: new Date().toISOString(), samples, summary }, null, 2)}\n`,
+      `${JSON.stringify(report, null, 2)}\n`,
       'utf8',
     );
 
@@ -114,9 +143,38 @@ describe('Chunk profiling', () => {
         + ` indices max=${entry.maximums.staticMeshIndices.toFixed(0)}`
         + ` cave=${entry.caveChunks}/${entry.samples}`,
       );
+      console.log(
+        `${entry.label}: maxBreakdown coord=${formatCoord(entry.maxBreakdown.coord)}`
+        + ` totalMs=${entry.maxBreakdown.totalMs.toFixed(2)}`
+        + ` octoboxMs=${entry.maxBreakdown.octoboxMs.toFixed(2)}`
+        + ` fieldMs=${entry.maxBreakdown.octoboxFieldSampleMs.toFixed(2)}`
+        + ` nodes=${entry.maxBreakdown.octoboxNodesVisited.toFixed(0)}`
+        + ` leaves=${entry.maxBreakdown.octoboxLeavesGenerated.toFixed(0)}`
+        + ` skelCandidates=${entry.maxBreakdown.skeletonCandidatesTested.toFixed(0)}`
+        + ` adjacencyMs=${entry.maxBreakdown.adjacencyBuildMs.toFixed(2)}`
+        + ` cells=${entry.maxBreakdown.cells.toFixed(0)}`
+        + ` staticMeshMs=${entry.maxBreakdown.staticMeshMs.toFixed(2)}`
+        + ` serializeMs=${entry.maxBreakdown.serializeMs.toFixed(2)}`,
+      );
+    }
+    for (const entry of topSlowChunks) {
+      console.log(
+        `topSlowChunk coord=${formatCoord(entry.coord)}`
+        + ` totalMs=${entry.totalMs.toFixed(2)}`
+        + ` octoboxMs=${entry.octoboxMs.toFixed(2)}`
+        + ` fieldMs=${entry.octoboxFieldSampleMs.toFixed(2)}`
+        + ` nodes=${entry.octoboxNodesVisited.toFixed(0)}`
+        + ` leaves=${entry.octoboxLeavesGenerated.toFixed(0)}`
+        + ` skelCandidates=${entry.skeletonCandidatesTested.toFixed(0)}`
+        + ` adjacencyMs=${entry.adjacencyBuildMs.toFixed(2)}`
+        + ` cells=${entry.cells.toFixed(0)}`
+        + ` staticMeshMs=${entry.staticMeshMs.toFixed(2)}`
+        + ` serializeMs=${entry.serializeMs.toFixed(2)}`,
+      );
     }
 
     expect(samples.length).toBeGreaterThan(0);
+    expect(topSlowChunks.length).toBeGreaterThan(0);
   }, 30_000);
 });
 
@@ -180,16 +238,47 @@ function summarize(samples: ChunkProfileSample[]): ChunkProfileSummary[] {
       averages[key] = values.reduce((sum, value) => sum + value, 0) / values.length;
       maximums[key] = Math.max(...values);
     }
+    const slowestSample = group.reduce((slowest, sample) => (
+      sample.timings.totalMs > slowest.timings.totalMs ? sample : slowest
+    ));
     output.push({
       label,
       samples: group.length,
       caveChunks: group.filter((sample) => sample.isCaveChunk).length,
       averages,
       maximums,
+      maxBreakdown: toSlowBreakdown(slowestSample),
     });
   }
   output.sort((left, right) => right.averages.totalMs - left.averages.totalMs);
   return output;
+}
+
+function buildTopSlowChunks(samples: ChunkProfileSample[], limit: number): ChunkSlowBreakdown[] {
+  return [...samples]
+    .sort((left, right) => right.timings.totalMs - left.timings.totalMs)
+    .slice(0, limit)
+    .map(toSlowBreakdown);
+}
+
+function toSlowBreakdown(sample: ChunkProfileSample): ChunkSlowBreakdown {
+  return {
+    coord: sample.coord,
+    totalMs: sample.timings.totalMs,
+    octoboxMs: sample.timings.octoboxMs ?? 0,
+    octoboxFieldSampleMs: sample.timings.octoboxFieldSampleMs ?? 0,
+    octoboxNodesVisited: sample.timings.octoboxNodesVisited ?? 0,
+    octoboxLeavesGenerated: sample.timings.octoboxLeavesGenerated ?? 0,
+    skeletonCandidatesTested: sample.timings.octoboxSkeletonCandidatesTested ?? 0,
+    adjacencyBuildMs: sample.timings.adjacencyBuildMs ?? 0,
+    cells: sample.cells,
+    staticMeshMs: sample.timings.staticMeshMs ?? 0,
+    serializeMs: sample.timings.serializeMs ?? 0,
+  };
+}
+
+function formatCoord(coord: ChunkCoord): string {
+  return `${coord.x},${coord.y},${coord.z}`;
 }
 
 function readMetric(
