@@ -509,6 +509,12 @@ body {
   color: #a4cadb;
 }
 
+.pause-menu-grid {
+  display: grid;
+  gap: 0.05em;
+  margin: 1em 0 0.2em;
+}
+
 .death-card {
   pointer-events: auto;
   width: min(88vw, 320px);

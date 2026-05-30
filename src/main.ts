@@ -13,6 +13,12 @@ const params = new URLSearchParams(window.location.search);
 if (params.get('benchmark') === '1') {
   const benchmark = new BoidsBenchmark(root);
   benchmark.start();
+  if (params.get('autorun') === '1') {
+    void benchmark.runAutorun({
+      sessionLabel: params.get('label') || 'iphone-benchmark',
+      submit: params.get('submit') !== '0',
+    });
+  }
 } else {
   const game = new Game(root);
   game.start();

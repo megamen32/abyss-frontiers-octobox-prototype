@@ -9,7 +9,9 @@ import { InputController } from './input';
 import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
 import { AutopilotBot } from './autopilot';
-import { applyRuntimeTuning } from './runtimeTuning';
+import { applyRuntimeTuning, getRuntimeFlightTuning } from './runtimeTuning';
+import { runIfGameStateAdvances, shouldAdvanceGameState } from './pausePolicy';
+import { applyDebugToggle, type DebugToggleState } from './debugSettings';
 import { applyKeyboardSteering } from './steering';
 import { ShipPredictor } from './shipPredictor';
 import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
@@ -17,15 +19,17 @@ import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { shortestWrappedDistance, wrappedChunkDistance, wrapChunkCoord } from '../utils/worldTopology';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
+import { createRuntimeBoidsConfig } from './runtimeBoidsConfig';
 import { BoidsSystem } from '../../boids/BoidsSystem';
 import { BoidBehavior } from '../../boids/BoidsTypes';
-import { MINE_TYPE, UNIFIED_WORLD_BOIDS_CONFIG } from '../../boids/BoidsConfig';
+import { MINE_TYPE } from '../../boids/BoidsConfig';
 
 const DEBUG_SETTINGS_KEYS = {
   debugEnabled: 'abyss3.debugEnabled',
   debugUiVisible: 'abyss3.debugUiVisible',
   chunkDebugEnabled: 'abyss3.chunkDebugEnabled',
   fogEnabled: 'abyss3.fogEnabled',
+  boidsDebugVisible: 'abyss3.boidsDebugVisible',
   autopilot: 'abyss3.autopilot',
   virtualJoystickEnabled: 'abyss3.virtualJoystickEnabled',
 } as const;
@@ -64,15 +68,13 @@ export class Game {
   private debugUiVisible!: boolean;
   private chunkDebugEnabled!: boolean;
   private fogEnabled!: boolean;
+  private boidsDebugVisible!: boolean;
   private lastFrameTime = 0;
   private fps = 60;
   private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
-  private readonly boids = new BoidsSystem({
-    ...UNIFIED_WORLD_BOIDS_CONFIG,
-    forceCPU: new URLSearchParams(window.location.search).has('cpu'),
-  });
+  private readonly boids = new BoidsSystem(createRuntimeBoidsConfig());
   private readonly mineBoidIdsByChunk = new Map<string, Set<string>>();
   private readonly autopilot = new AutopilotBot();
   private virtualJoystickEnabled = false;
@@ -82,6 +84,7 @@ export class Game {
     this.debugUiVisible = readStoredBool(DEBUG_SETTINGS_KEYS.debugUiVisible, GAME_CONFIG.visuals.debugEnabled);
     this.chunkDebugEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.chunkDebugEnabled, GAME_CONFIG.visuals.debugEnabled);
     this.fogEnabled = readStoredBool(DEBUG_SETTINGS_KEYS.fogEnabled, true);
+    this.boidsDebugVisible = readStoredBool(DEBUG_SETTINGS_KEYS.boidsDebugVisible, GAME_CONFIG.visuals.debugEnabled);
     if (readStoredBool(DEBUG_SETTINGS_KEYS.autopilot, false)) {
       this.autopilot.setEnabled(true);
     }
@@ -99,6 +102,12 @@ export class Game {
         this.virtualJoystickEnabled = enabled;
         writeStoredBool(DEBUG_SETTINGS_KEYS.virtualJoystickEnabled, enabled);
       },
+      onToggleDebug: (enabled) => this.setDebugEnabled(enabled),
+      onToggleFps: (enabled) => this.setDebugUiVisible(enabled),
+      onToggleChunks: (enabled) => this.setChunkDebugEnabled(enabled),
+      onToggleFog: (enabled) => this.setFogEnabled(enabled),
+      onToggleBoidsDebug: (enabled) => this.setBoidsDebugVisible(enabled),
+      onToggleAutopilot: (enabled) => this.setAutopilotEnabled(enabled),
     });
     if (this.virtualJoystickEnabled) {
       this.render.hud.setJoystickVisible(true);
@@ -155,27 +164,68 @@ export class Game {
   }
 
   private toggleDebug(): void {
-    this.debugEnabled = !this.debugEnabled;
-    this.render.setDebugEnabled(this.debugEnabled);
-    this.persistDebugSettings();
+    this.setDebugEnabled(!this.debugEnabled);
+  }
+
+  private setDebugEnabled(enabled: boolean): void {
+    this.applyDebugState(applyDebugToggle(this.debugState(), 'debug', enabled));
   }
 
   private toggleDebugUi(): void {
-    if (!this.debugEnabled) return;
-    this.debugUiVisible = !this.debugUiVisible;
-    this.render.setDebugUiVisible(this.debugUiVisible);
-    this.persistDebugSettings();
+    this.setDebugUiVisible(!this.debugUiVisible);
+  }
+
+  private setDebugUiVisible(visible: boolean): void {
+    this.applyDebugState(applyDebugToggle(this.debugState(), 'fps', visible));
   }
 
   private toggleChunkDebug(): void {
-    this.chunkDebugEnabled = !this.chunkDebugEnabled;
-    this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
-    this.persistDebugSettings();
+    this.setChunkDebugEnabled(!this.chunkDebugEnabled);
+  }
+
+  private setChunkDebugEnabled(enabled: boolean): void {
+    this.applyDebugState(applyDebugToggle(this.debugState(), 'chunks', enabled));
   }
 
   private toggleFog(): void {
-    this.fogEnabled = !this.fogEnabled;
+    this.setFogEnabled(!this.fogEnabled);
+  }
+
+  private setFogEnabled(enabled: boolean): void {
+    this.applyDebugState(applyDebugToggle(this.debugState(), 'fog', enabled));
+  }
+
+  private setBoidsDebugVisible(enabled: boolean): void {
+    this.applyDebugState(applyDebugToggle(this.debugState(), 'boids', enabled));
+  }
+
+  private debugState(): DebugToggleState {
+    return {
+      debugEnabled: this.debugEnabled,
+      debugUiVisible: this.debugUiVisible,
+      chunkDebugEnabled: this.chunkDebugEnabled,
+      fogEnabled: this.fogEnabled,
+      boidsDebugVisible: this.boidsDebugVisible,
+    };
+  }
+
+  private applyDebugState(state: DebugToggleState): void {
+    this.debugEnabled = state.debugEnabled;
+    this.debugUiVisible = state.debugUiVisible;
+    this.chunkDebugEnabled = state.chunkDebugEnabled;
+    this.fogEnabled = state.fogEnabled;
+    this.boidsDebugVisible = state.boidsDebugVisible;
+    this.render.setDebugEnabled(this.debugEnabled);
+    this.render.setDebugUiVisible(this.debugUiVisible);
+    this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
     this.render.setFogEnabled(this.fogEnabled);
+    this.persistDebugSettings();
+  }
+
+  private setAutopilotEnabled(enabled: boolean): void {
+    if (this.autopilot.isEnabled() !== enabled) {
+      this.autopilot.toggle();
+    }
     this.persistDebugSettings();
   }
 
@@ -226,14 +276,17 @@ export class Game {
     this.profiler.addSample('inputMs', performance.now() - inputStart);
     this.render.applyGamepadCameraYaw(input.cameraYaw * dt);
 
-    const effectiveInput = this.autopilot.computeInput(
-      this.player,
-      this.chunkManager.activeChunks.values(),
-      dt,
-    ) ?? input;
+    const gameStateAdvances = shouldAdvanceGameState(this.paused);
+    const effectiveInput = gameStateAdvances
+      ? this.autopilot.computeInput(
+        this.player,
+        this.chunkManager.activeChunks.values(),
+        dt,
+      ) ?? input
+      : input;
 
-    let tuning = applyRuntimeTuning(effectiveInput);
-    if (!this.paused) {
+    let tuning = gameStateAdvances ? applyRuntimeTuning(effectiveInput) : getRuntimeFlightTuning();
+    runIfGameStateAdvances(this.paused, () => {
       const simulationStart = performance.now();
       applyKeyboardSteering(this.player, effectiveInput, dt);
       if (effectiveInput.brake) {
@@ -267,12 +320,14 @@ export class Game {
       this.updateWorld(dt);
       this.profiler.addSample('worldMs', performance.now() - worldStart);
       this.spawnBudget.recordFrame(rawDt, this.fps);
-    }
+    });
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const predictor = ShipPredictor.forPlayer(this.player);
-    this.boids.update(this.paused ? 0 : dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
-    this.syncMineStateFromBoids();
+    runIfGameStateAdvances(this.paused, () => {
+      this.boids.update(dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
+      this.syncMineStateFromBoids();
+    });
     const renderStart = performance.now();
     this.render.updateFrame({
       paused: this.paused,
@@ -289,6 +344,7 @@ export class Game {
       dangerAccent: depthBand.accent,
       tuning,
       fogEnabled: this.fogEnabled,
+      boidsDebugVisible: this.boidsDebugVisible,
       spawnBudget: this.spawnBudget.getBudget(),
       averageFps: this.spawnBudget.getAverageFps(),
       timings: {
@@ -527,6 +583,7 @@ export class Game {
     writeStoredBool(DEBUG_SETTINGS_KEYS.debugUiVisible, this.debugUiVisible);
     writeStoredBool(DEBUG_SETTINGS_KEYS.chunkDebugEnabled, this.chunkDebugEnabled);
     writeStoredBool(DEBUG_SETTINGS_KEYS.fogEnabled, this.fogEnabled);
+    writeStoredBool(DEBUG_SETTINGS_KEYS.boidsDebugVisible, this.boidsDebugVisible);
     writeStoredBool(DEBUG_SETTINGS_KEYS.autopilot, this.autopilot.isEnabled());
   }
 }

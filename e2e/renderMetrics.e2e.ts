@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { appUrl } from './appUrl';
 
 interface MetricSummary {
   average: number;
@@ -15,7 +16,7 @@ interface RenderReport {
 test('captures real renderer and draw-call metrics to a report', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  await page.goto('/');
+  await page.goto(appUrl('/'));
   await page.waitForFunction(() => typeof window.__ABYSS_PERF__?.report === 'function');
   await page.evaluate(() => window.__ABYSS_PERF__?.clear());
   await page.waitForTimeout(4_000);

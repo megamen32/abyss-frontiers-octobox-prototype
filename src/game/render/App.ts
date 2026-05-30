@@ -276,6 +276,7 @@ export class RenderApp {
     dangerAccent: string;
     tuning: RuntimeFlightTuning;
     fogEnabled: boolean;
+    boidsDebugVisible: boolean;
     spawnBudget: number;
     averageFps: number;
     timings: DebugTimingSnapshot;
@@ -460,6 +461,7 @@ export class RenderApp {
       debugUiVisible: this.debugUiVisible,
       chunkDebugEnabled: this.chunkDebugEnabled,
       fogEnabled: frame.fogEnabled,
+      boidsDebugVisible: frame.boidsDebugVisible,
       spawnBudget: frame.spawnBudget,
       averageFps: frame.averageFps,
       timings: renderTimings,
@@ -467,7 +469,7 @@ export class RenderApp {
       paused: frame.paused,
       autopilot: frame.autopilot,
       virtualJoystickEnabled: frame.virtualJoystickEnabled,
-      boidsDebug: this.boids?.debug,
+      boidsDebug: frame.boidsDebugVisible ? this.boids?.debug : undefined,
     });
   }
 

@@ -6,14 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:render-file": "BASE_URL=./ npm run build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:render": "playwright test --project=webkit",
+    "test:render": "npm run build:render-file && ABYSS_RENDER_MODE=file playwright test --project=webkit",
     "test:render:chromium": "playwright test --browser=chromium",
     "profile:chunks": "vitest run tests/chunkProfile.test.ts",
-    "profile:render": "playwright test e2e/renderMetrics.e2e.ts --project=webkit",
-    "profile:deep-dive": "playwright test e2e/deepDiveProfile.e2e.ts --project=webkit",
-    "profile:all": "npm run profile:chunks && npm run profile:render && npm run profile:deep-dive"
+    "profile:boids": "vitest run tests/boidsProfile.test.ts",
+    "profile:workers": "vitest run tests/chunkWorkerParallelProfile.test.ts",
+    "profile:readiness": "node scripts/writePerformanceReadiness.mjs",
+    "profile:render": "npm run build:render-file && ABYSS_RENDER_MODE=file playwright test e2e/renderMetrics.e2e.ts --project=webkit",
+    "profile:deep-dive": "npm run build:render-file && ABYSS_RENDER_MODE=file playwright test e2e/deepDiveProfile.e2e.ts --project=webkit",
+    "profile:all": "npm run profile:chunks && npm run profile:boids && npm run profile:workers && npm run profile:readiness && npm run profile:render && npm run profile:deep-dive",
+    "benchmark:iphone": "vite --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
     "three": "^0.177.0"

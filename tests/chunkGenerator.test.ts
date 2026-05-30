@@ -205,6 +205,14 @@ describe('ChunkGenerator', () => {
     }
   });
 
+  it('stops dense tunnel-wall subdivision before sub-passage leaves dominate deep chunks', () => {
+    const generator = new ChunkGenerator(133742);
+    const { chunk, timings } = generator.generateProfiled({ x: 0, y: -10, z: 0 });
+    expect(timings.octoboxSolidWallEarlyStops ?? 0).toBeGreaterThan(0);
+    expect(chunk.cells.length).toBeLessThan(4000);
+    expect(chunk.cells.some((cell) => cell.kind === 'free')).toBe(true);
+  });
+
   it('keeps spawn chunk navigable in the wrapped torus', () => {
     const generator = new ChunkGenerator(133742);
     const chunk = generator.generate({ x: 0, y: 0, z: 0 });
@@ -226,6 +234,51 @@ describe('ChunkGenerator', () => {
     expect(adjacency).not.toContainEqual(['a', 'corner']);
     expect(adjacency).not.toContainEqual(['a', 'slit']);
     expect(profile.pairsTested).toBeLessThan(6);
+  });
+
+  it('handles adjacency edge cases without duplicate or self edges', () => {
+    const minOpening = GAME_CONFIG.world.minPassageRadius * 2;
+    const cells = [
+      testCell('root', [0, 0, 0], [16, 24, 24]),
+      testCell('small-a', [16, 0, 0], [24, 8, 8]),
+      testCell('small-b', [16, 8, 0], [24, 16, 8]),
+      testCell('small-c', [16, 0, 8], [24, 8, 16]),
+      testCell('small-d', [16, 16, 16], [24, 24, 24]),
+      testCell('corner-only', [16, 24, 24], [24, 32, 32]),
+      testCell('gap', [16 + 0.01, 0, 16], [24 + 0.01, 8, 24]),
+      testCell('tolerance', [16 + 0.00004, 8, 8], [24 + 0.00004, 16, 16]),
+      testCell('too-narrow', [16, 0, 24], [24, minOpening - 0.1, 32]),
+    ];
+
+    const profile = { pairsTested: 0 };
+    const adjacency = buildAdjacency(cells, profile);
+    const edgeKeys = new Set<string>();
+    for (const [a, b] of adjacency) {
+      expect(a).not.toBe(b);
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      expect(edgeKeys.has(key)).toBe(false);
+      edgeKeys.add(key);
+    }
+    expect(adjacency).toContainEqual(['root', 'small-a']);
+    expect(adjacency).toContainEqual(['root', 'small-b']);
+    expect(adjacency).toContainEqual(['root', 'small-c']);
+    expect(adjacency).toContainEqual(['root', 'small-d']);
+    expect(adjacency).toContainEqual(['root', 'tolerance']);
+    expect(adjacency).not.toContainEqual(['root', 'corner-only']);
+    expect(adjacency).not.toContainEqual(['root', 'gap']);
+    expect(adjacency).not.toContainEqual(['root', 'too-narrow']);
+  });
+
+  it('keeps wrap-boundary chunk adjacency unique after quantized face bucketing', () => {
+    const generator = new ChunkGenerator(133742);
+    const chunk = generator.generate({ x: 511, y: 511, z: 0 });
+    const edgeKeys = new Set<string>();
+    for (const [a, b] of chunk.adjacency) {
+      expect(a).not.toBe(b);
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      expect(edgeKeys.has(key)).toBe(false);
+      edgeKeys.add(key);
+    }
   });
 
   it('raises world danger and obstacle density with depth', () => {
@@ -439,6 +492,12 @@ describe('ChunkGenerator', () => {
     expect(mine.state).toBe('targeting');
     expect(mine.telegraphTimer).toBeCloseTo(GAME_CONFIG.mines.telegraphDuration);
     expect(mine.targetPosition).not.toBeNull();
+    expect(mine.velocity.length()).toBe(0);
+
+    const telegraphBeforePause = mine.telegraphTimer;
+    updateMinesInChunk(chunk, player, 0);
+    expect(mine.state).toBe('targeting');
+    expect(mine.telegraphTimer).toBeCloseTo(telegraphBeforePause);
     expect(mine.velocity.length()).toBe(0);
 
     updateMinesInChunk(chunk, player, GAME_CONFIG.mines.telegraphDuration);

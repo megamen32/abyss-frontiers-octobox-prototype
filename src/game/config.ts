@@ -201,8 +201,8 @@ export const GAME_CONFIG = {
     maxObstaclesPerChunk: 120,
     // Maximum number of loot items (coins + chests) that can be placed per chunk.
     maxLootPerChunk: 20,
-    // Number of web workers dedicated to building chunk geometry in the background.
-    chunkBuildWorkers: 2,
+    // Maximum number of web workers dedicated to building chunk geometry in the background.
+    chunkBuildWorkers: 4,
     generationProfile: 'tunnel_field',
     tunnelCoreThreshold: 0.72,
     tunnelWallThreshold: 0.6,

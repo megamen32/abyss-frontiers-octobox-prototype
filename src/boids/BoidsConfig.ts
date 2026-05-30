@@ -271,7 +271,7 @@ export const UNIFIED_FISH_BOIDS_CONFIG: BoidsConfig = {
   flowWeight: 0.6,
   playerAvoidanceWeight: 2.0,
   avoidPlayerRadius: 25,
-  gridCellSize: 14,
+  gridCellSize: 24,
   maxBoidsPerCell: 128,
   visual: {
     type: 'fish',

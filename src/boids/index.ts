@@ -16,6 +16,10 @@ export type {
   BoidTypeInteraction,
   BoidVisualType,
   BoidLODConfig,
+  BoidSimLevel,
+  BoidShaderLod,
+  BoidCluster,
+  DormantBoidGroup,
   BoidVisualConfig,
   BoidFallbackConfig,
   BoidWorldCell,
@@ -27,5 +31,7 @@ export type {
 } from './BoidsTypes'
 export { BoidFlags, BoidBehavior } from './BoidsTypes'
 export type { BoidState } from './BoidsTypes'
+export { selectBoidSimLevel } from './BoidsLOD'
+export type { BoidLODSelection, BoidLODSelectionInput } from './BoidsLOD'
 export { BoidsOctoBoxAdapter } from './BoidsOctoBoxAdapter'
 export { BoidsSpatialGrid } from './BoidsSpatialGrid'

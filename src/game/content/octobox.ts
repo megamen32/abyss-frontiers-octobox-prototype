@@ -14,6 +14,7 @@ export interface OctoboxProfile {
   nodesVisited: number;
   leavesGenerated: number;
   maxDepthReached: number;
+  solidWallEarlyStops: number;
 }
 
 export function generateOctoBoxLeaves(bounds: AABB, seed: number, profile?: OctoboxProfile): LeafCell[] {
@@ -26,6 +27,7 @@ export function generateOctoBoxLeaves(bounds: AABB, seed: number, profile?: Octo
     profile.nodesVisited = 0;
     profile.leavesGenerated = 0;
     profile.maxDepthReached = 0;
+    profile.solidWallEarlyStops = 0;
   }
   split(bounds, 0, 'root', rng, leaves, seed, profile);
   return leaves;
@@ -57,10 +59,12 @@ function split(
   const divisions = chooseDivisions(density);
   const minLeafSize = getMinLeafSize();
   const maxLeafSize = getMaxLeafSize();
+  const solidWallEarlyStop = shouldStopSolidWall(bounds, fieldBias, minSize);
   const forceSplit = minSize > maxLeafSize && density > GAME_CONFIG.world.octoboxEmptyDensityThreshold;
   const shouldStop =
     depth >= GAME_CONFIG.world.octoboxMaxDepth ||
     minSize <= minLeafSize ||
+    solidWallEarlyStop ||
     minSize / divisions < minLeafSize ||
     (depth > 0 && density <= GAME_CONFIG.world.octoboxEmptyDensityThreshold) ||
     (!forceSplit && depth > 0 && rng.next() > splitProbabilityForDensity(density));
@@ -69,6 +73,9 @@ function split(
     leaves.push({ id, depth, bounds, kind: 'empty', fieldBias });
     if (profile) {
       profile.leavesGenerated += 1;
+      if (solidWallEarlyStop) {
+        profile.solidWallEarlyStops += 1;
+      }
     }
     return;
   }
@@ -139,6 +146,25 @@ function getMinLeafSize(): number {
 function getMaxLeafSize(): number {
   const shipDiameter = GAME_CONFIG.ship.radius * 2;
   return shipDiameter * GAME_CONFIG.world.octoboxMaxCellSizeMultiplier;
+}
+
+function shouldStopSolidWall(bounds: AABB, fieldBias: number, minSize: number): boolean {
+  if (GAME_CONFIG.world.generationProfile !== ('tunnel_field' as string)) {
+    return false;
+  }
+  if (fieldBias > GAME_CONFIG.world.tunnelWallThreshold) {
+    return false;
+  }
+  const maxSubPassageLeaf = GAME_CONFIG.world.minPassageRadius * 2 * 0.95;
+  if (minSize > maxSubPassageLeaf) {
+    return false;
+  }
+  const maxSize = Math.max(
+    bounds.max.x - bounds.min.x,
+    bounds.max.y - bounds.min.y,
+    bounds.max.z - bounds.min.z,
+  );
+  return maxSize <= GAME_CONFIG.world.minPassageRadius * 2.4;
 }
 
 function computeFieldBias(bounds: AABB, seed: number, profile?: OctoboxProfile): number {

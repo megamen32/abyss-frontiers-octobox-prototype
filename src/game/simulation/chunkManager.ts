@@ -36,19 +36,22 @@ export class ChunkManager {
   private readonly pendingKeys = new Set<string>();
   private readonly wantedKeys = new Set<string>();
   private readonly readyQueue: ChunkData[] = [];
-  private readonly debugTimings: Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs'> = {
+  private readonly debugTimings: Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs' | 'workerCount'> = {
     hydrateMs: 0,
     readyQueueMs: 0,
     workerTotalMs: 0,
     workerOctoboxMs: 0,
     workerStaticMeshMs: 0,
     workerSerializeMs: 0,
+    workerCount: 0,
   };
   private roundRobinIndex = 0;
 
-  constructor(seed: number) {
+  constructor(seed: number, workerCount = resolveChunkBuildWorkerCount()) {
     this.seed = seed;
-    this.workers = Array.from({ length: GAME_CONFIG.world.chunkBuildWorkers }, () => {
+    const resolvedWorkerCount = Math.max(1, Math.floor(workerCount));
+    this.debugTimings.workerCount = resolvedWorkerCount;
+    this.workers = Array.from({ length: resolvedWorkerCount }, () => {
       const worker = new Worker(new URL('../content/chunkWorker.ts', import.meta.url), { type: 'module' });
       worker.addEventListener('message', this.handleWorkerMessage);
       return worker;
@@ -150,7 +153,7 @@ export class ChunkManager {
     return { added, removed, currentCoord };
   }
 
-  consumeDebugTimings(): Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs'> {
+  consumeDebugTimings(): Pick<DebugTimingSnapshot, 'hydrateMs' | 'readyQueueMs' | 'workerTotalMs' | 'workerOctoboxMs' | 'workerStaticMeshMs' | 'workerSerializeMs' | 'workerCount'> {
     return { ...this.debugTimings };
   }
 
@@ -177,6 +180,34 @@ export class ChunkManager {
       return;
     }
     this.readyQueue.push(chunk);
+  };
+}
+
+interface ChunkWorkerDeviceProfile {
+  hardwareConcurrency?: number;
+  maxTouchPoints?: number;
+  coarsePointer?: boolean;
+  viewportWidth?: number;
+  configuredMax?: number;
+}
+
+export function resolveChunkBuildWorkerCount(profile: ChunkWorkerDeviceProfile = detectChunkWorkerDeviceProfile()): number {
+  const configuredMax = Math.max(1, Math.floor(profile.configuredMax ?? GAME_CONFIG.world.chunkBuildWorkers));
+  const logicalCpu = Math.max(1, Math.floor(profile.hardwareConcurrency ?? 4));
+  const mobile = (profile.maxTouchPoints ?? 0) > 0 || profile.coarsePointer === true || (profile.viewportWidth ?? 1024) < 820;
+  if (mobile) {
+    return Math.max(1, Math.min(2, configuredMax, logicalCpu));
+  }
+  return Math.max(1, Math.min(4, configuredMax, Math.max(1, logicalCpu - 2)));
+}
+
+function detectChunkWorkerDeviceProfile(): ChunkWorkerDeviceProfile {
+  const nav = globalThis.navigator;
+  return {
+    hardwareConcurrency: nav?.hardwareConcurrency,
+    maxTouchPoints: nav?.maxTouchPoints,
+    coarsePointer: typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia('(pointer: coarse)').matches : false,
+    viewportWidth: typeof globalThis.innerWidth === 'number' ? globalThis.innerWidth : undefined,
   };
 }
 
