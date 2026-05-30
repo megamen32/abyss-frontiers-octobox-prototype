@@ -101,6 +101,7 @@ describe('Chunk profiling', () => {
         + ` field avg=${entry.averages.octoboxFieldSampleMs.toFixed(2)}`
         + ` split avg=${entry.averages.octoboxSplitPointsMs.toFixed(2)}`
         + ` adjacency avg=${entry.averages.adjacencyBuildMs.toFixed(2)}`
+        + ` pairs avg=${entry.averages.adjacencyPairsTested.toFixed(0)}`
         + ` navSet avg=${entry.averages.navigableSetMs.toFixed(2)}`
         + ` portals avg=${entry.averages.portalConnectivityMs.toFixed(2)}`
         + ` staticMesh avg=${entry.averages.staticMeshMs.toFixed(2)}`
@@ -151,6 +152,7 @@ function summarize(samples: ChunkProfileSample[]): ChunkProfileSummary[] {
     'octoboxMaxDepthReached',
     'navigationMs',
     'adjacencyBuildMs',
+    'adjacencyPairsTested',
     'navigableSetMs',
     'portalConnectivityMs',
     'adjacencyEdges',
@@ -199,6 +201,7 @@ function readMetric(
     | 'octoboxMaxDepthReached'
     | 'navigationMs'
     | 'adjacencyBuildMs'
+    | 'adjacencyPairsTested'
     | 'navigableSetMs'
     | 'portalConnectivityMs'
     | 'adjacencyEdges'

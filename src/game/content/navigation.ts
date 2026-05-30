@@ -3,28 +3,210 @@ import { GAME_CONFIG } from '../config';
 import { aabbCenter, aabbSize, clamp, containsPoint, intersectsAabb } from '../utils/chunk';
 import { SeededRandom } from '../utils/rng';
 
-export function buildAdjacency(cells: LeafCell[]): [string, string][] {
+export interface AdjacencyProfile {
+  pairsTested: number;
+}
+
+type Axis = 'x' | 'y' | 'z';
+
+interface CellRef {
+  cell: LeafCell;
+  index: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+}
+
+interface FaceIndex {
+  xMin: Map<number, CellRef[]>;
+  xMax: Map<number, CellRef[]>;
+  yMin: Map<number, CellRef[]>;
+  yMax: Map<number, CellRef[]>;
+  zMin: Map<number, CellRef[]>;
+  zMax: Map<number, CellRef[]>;
+}
+
+const FACE_QUANTUM = 0.0001;
+
+export function buildAdjacency(cells: LeafCell[], profile?: AdjacencyProfile): [string, string][] {
   const edges: [string, string][] = [];
   const minOpening = GAME_CONFIG.world.minPassageRadius * 2;
-
-  for (let i = 0; i < cells.length; i += 1) {
-    for (let j = i + 1; j < cells.length; j += 1) {
-      const a = cells[i];
-      const b = cells[j];
-      const axis = touchingAxis(a.bounds, b.bounds);
-      if (!axis) {
-        continue;
-      }
-
-      const overlap = overlapForAxis(a.bounds, b.bounds, axis);
-      if (overlap.x < minOpening || overlap.y < minOpening) {
-        continue;
-      }
-      edges.push([a.id, b.id]);
-    }
+  if (profile) {
+    profile.pairsTested = 0;
   }
 
+  const refs = cells.map(toCellRef);
+  const index = buildFaceIndex(refs);
+  connectAxis(index.xMax, index.xMin, 'x', minOpening, edges, profile);
+  connectAxis(index.yMax, index.yMin, 'y', minOpening, edges, profile);
+  connectAxis(index.zMax, index.zMin, 'z', minOpening, edges, profile);
+
   return edges;
+}
+
+function toCellRef(cell: LeafCell, index: number): CellRef {
+  return {
+    cell,
+    index,
+    minX: quantize(cell.bounds.min.x),
+    maxX: quantize(cell.bounds.max.x),
+    minY: quantize(cell.bounds.min.y),
+    maxY: quantize(cell.bounds.max.y),
+    minZ: quantize(cell.bounds.min.z),
+    maxZ: quantize(cell.bounds.max.z),
+  };
+}
+
+function quantize(value: number): number {
+  return Math.round(value / FACE_QUANTUM);
+}
+
+function buildFaceIndex(refs: CellRef[]): FaceIndex {
+  const index: FaceIndex = {
+    xMin: new Map(),
+    xMax: new Map(),
+    yMin: new Map(),
+    yMax: new Map(),
+    zMin: new Map(),
+    zMax: new Map(),
+  };
+  for (const ref of refs) {
+    pushFace(index.xMin, ref.minX, ref);
+    pushFace(index.xMax, ref.maxX, ref);
+    pushFace(index.yMin, ref.minY, ref);
+    pushFace(index.yMax, ref.maxY, ref);
+    pushFace(index.zMin, ref.minZ, ref);
+    pushFace(index.zMax, ref.maxZ, ref);
+  }
+  return index;
+}
+
+function pushFace(map: Map<number, CellRef[]>, key: number, ref: CellRef): void {
+  const refs = map.get(key);
+  if (refs) {
+    refs.push(ref);
+    return;
+  }
+  map.set(key, [ref]);
+}
+
+function connectAxis(
+  maxFaces: Map<number, CellRef[]>,
+  minFaces: Map<number, CellRef[]>,
+  axis: Axis,
+  minOpening: number,
+  edges: [string, string][],
+  profile?: AdjacencyProfile,
+): void {
+  const bucketSpan = Math.max(1, Math.round(minOpening / FACE_QUANTUM));
+  for (const [plane, maxCells] of maxFaces) {
+    const minCells = minFaces.get(plane);
+    if (!minCells) {
+      continue;
+    }
+    connectFaceGroups(maxCells, minCells, axis, bucketSpan, minOpening, edges, profile);
+  }
+}
+
+function connectFaceGroups(
+  aCells: CellRef[],
+  bCells: CellRef[],
+  axis: Axis,
+  bucketSpan: number,
+  minOpening: number,
+  edges: [string, string][],
+  profile?: AdjacencyProfile,
+): void {
+  const smaller = aCells.length <= bCells.length ? aCells : bCells;
+  const larger = aCells.length <= bCells.length ? bCells : aCells;
+  const buckets = buildFaceBuckets(smaller, axis, bucketSpan);
+  for (const cell of larger) {
+    const seen = new Set<number>();
+    forEachBucketKey(cell, axis, bucketSpan, (key) => {
+      const candidates = buckets.get(key);
+      if (!candidates) {
+        return;
+      }
+      for (const other of candidates) {
+        if (seen.has(other.index)) {
+          continue;
+        }
+        seen.add(other.index);
+        if (profile) {
+          profile.pairsTested += 1;
+        }
+        const overlap = overlapForAxis(cell.cell.bounds, other.cell.bounds, axis);
+        if (overlap.x < minOpening || overlap.y < minOpening) {
+          continue;
+        }
+        edges.push(edgeForPair(cell, other));
+      }
+    });
+  }
+}
+
+function buildFaceBuckets(refs: CellRef[], axis: Axis, bucketSpan: number): Map<string, CellRef[]> {
+  const buckets = new Map<string, CellRef[]>();
+  for (const ref of refs) {
+    forEachBucketKey(ref, axis, bucketSpan, (key) => {
+      const bucket = buckets.get(key);
+      if (bucket) {
+        bucket.push(ref);
+        return;
+      }
+      buckets.set(key, [ref]);
+    });
+  }
+  return buckets;
+}
+
+function forEachBucketKey(ref: CellRef, axis: Axis, bucketSpan: number, visit: (key: string) => void): void {
+  const first = firstRangeAxis(axis);
+  const second = secondRangeAxis(axis);
+  const firstMin = Math.floor(getMin(ref, first) / bucketSpan);
+  const firstMax = Math.floor((getMax(ref, first) - 1) / bucketSpan);
+  const secondMin = Math.floor(getMin(ref, second) / bucketSpan);
+  const secondMax = Math.floor((getMax(ref, second) - 1) / bucketSpan);
+  for (let a = firstMin; a <= firstMax; a += 1) {
+    for (let b = secondMin; b <= secondMax; b += 1) {
+      visit(`${a}:${b}`);
+    }
+  }
+}
+
+function firstRangeAxis(axis: Axis): Axis {
+  return axis === 'x' ? 'y' : 'x';
+}
+
+function secondRangeAxis(axis: Axis): Axis {
+  return axis === 'z' ? 'y' : 'z';
+}
+
+function getMin(ref: CellRef, axis: Axis): number {
+  if (axis === 'x') {
+    return ref.minX;
+  }
+  if (axis === 'y') {
+    return ref.minY;
+  }
+  return ref.minZ;
+}
+
+function getMax(ref: CellRef, axis: Axis): number {
+  if (axis === 'x') {
+    return ref.maxX;
+  }
+  if (axis === 'y') {
+    return ref.maxY;
+  }
+  return ref.maxZ;
+}
+
+function edgeForPair(a: CellRef, b: CellRef): [string, string] {
+  return a.index < b.index ? [a.cell.id, b.cell.id] : [b.cell.id, a.cell.id];
 }
 
 export function buildNavigableSet(
@@ -101,29 +283,6 @@ export function buildNavigableSet(
   }
 
   return freeIds;
-}
-
-function touchingAxis(a: AABB, b: AABB): 'x' | 'y' | 'z' | null {
-  const epsilon = 0.0001;
-  const touchX = Math.abs(a.max.x - b.min.x) < epsilon || Math.abs(b.max.x - a.min.x) < epsilon;
-  const overlapY = Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y);
-  const overlapZ = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
-  if (touchX && overlapY > 0 && overlapZ > 0) {
-    return 'x';
-  }
-
-  const touchY = Math.abs(a.max.y - b.min.y) < epsilon || Math.abs(b.max.y - a.min.y) < epsilon;
-  const overlapX = Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x);
-  if (touchY && overlapX > 0 && overlapZ > 0) {
-    return 'y';
-  }
-
-  const touchZ = Math.abs(a.max.z - b.min.z) < epsilon || Math.abs(b.max.z - a.min.z) < epsilon;
-  if (touchZ && overlapX > 0 && overlapY > 0) {
-    return 'z';
-  }
-
-  return null;
 }
 
 function overlapForAxis(a: AABB, b: AABB, axis: 'x' | 'y' | 'z'): { x: number; y: number } {

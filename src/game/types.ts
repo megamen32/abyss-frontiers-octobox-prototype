@@ -172,6 +172,7 @@ export interface ChunkBuildTimings {
   octoboxMaxDepthReached?: number;
   navigationMs: number;
   adjacencyBuildMs?: number;
+  adjacencyPairsTested?: number;
   navigableSetMs?: number;
   portalConnectivityMs?: number;
   adjacencyEdges?: number;

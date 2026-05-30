@@ -95,8 +95,9 @@ export class ChunkGenerator {
     const octoboxStart = performance.now();
     const cells = generateOctoBoxLeaves(bounds, seed, octoboxProfile);
     const octoboxMs = performance.now() - octoboxStart;
+    const adjacencyProfile = { pairsTested: 0 };
     const adjacencyStart = performance.now();
-    const adjacencyAll = buildAdjacency(cells);
+    const adjacencyAll = buildAdjacency(cells, adjacencyProfile);
     const adjacencyBuildMs = performance.now() - adjacencyStart;
     const navigableSetStart = performance.now();
     const freeIds = buildNavigableSet(cells, portals, adjacencyAll, rng, bounds);
@@ -170,6 +171,7 @@ export class ChunkGenerator {
           octoboxMaxDepthReached: octoboxProfile.maxDepthReached,
           navigationMs,
           adjacencyBuildMs,
+          adjacencyPairsTested: adjacencyProfile.pairsTested,
           navigableSetMs,
           portalConnectivityMs,
           adjacencyEdges: adjacencyAll.length,

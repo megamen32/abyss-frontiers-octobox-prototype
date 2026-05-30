@@ -12,7 +12,7 @@ import { updateMinesInChunk } from '../src/game/simulation/mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from '../src/game/simulation/player';
 import { applyRuntimeTuning, getRuntimeFlightTuning, resetRuntimeFlightTuning } from '../src/game/simulation/runtimeTuning';
 import { SpawnBudgetController } from '../src/game/simulation/spawnBudget';
-import type { InputState, Obstacle } from '../src/game/types';
+import type { InputState, LeafCell, Obstacle } from '../src/game/types';
 import { applyKeyboardSteering } from '../src/game/simulation/steering';
 import { bandForDangerLevel, worldDangerLevel } from '../src/game/utils/depth';
 import { chunkGenerationRadius, fogChunkRenderRadius, fogVisibilityDistance } from '../src/game/utils/visibility';
@@ -20,6 +20,7 @@ import { chunkKey, chunkBounds } from '../src/game/utils/chunk';
 import { WORLD_SIZE, wrapChunkCoord, wrapPosition, shortestWrappedDelta, wrappedChunkDistance } from '../src/game/utils/worldTopology';
 import { faceSeed } from '../src/game/utils/hash';
 import { generatePortals } from '../src/game/content/portals';
+import { buildAdjacency } from '../src/game/content/navigation';
 import { isSkeletonGraphConnected, sampleWorldSkeleton, skeletonEdgesForMacroCoord } from '../src/game/content/worldSkeleton';
 import { lodNodeKey, lodNodeSize, meshStepForLodLevel } from '../src/game/content/worldLodNodes';
 import { buildWorldFieldCache, sampleCachedWorldField } from '../src/game/content/worldFieldCache';
@@ -72,6 +73,19 @@ function serializeChunk(seed: number, coord: { x: number; y: number; z: number }
       pos: [loot.position.x, loot.position.y, loot.position.z],
     })),
   });
+}
+
+function testCell(id: string, min: [number, number, number], max: [number, number, number]): LeafCell {
+  return {
+    id,
+    depth: 0,
+    bounds: {
+      min: new Vector3(min[0], min[1], min[2]),
+      max: new Vector3(max[0], max[1], max[2]),
+    },
+    kind: 'empty',
+    fieldBias: 0,
+  };
 }
 
 describe('ChunkGenerator', () => {
@@ -195,6 +209,23 @@ describe('ChunkGenerator', () => {
     const generator = new ChunkGenerator(133742);
     const chunk = generator.generate({ x: 0, y: 0, z: 0 });
     expect(chunk.cells.some((cell) => cell.kind === 'free')).toBe(true);
+  });
+
+  it('builds adjacency only for cells sharing a wide enough face overlap', () => {
+    const minOpening = GAME_CONFIG.world.minPassageRadius * 2;
+    const cells = [
+      testCell('a', [0, 0, 0], [16, 16, 16]),
+      testCell('b', [16, 0, 0], [32, 16, 16]),
+      testCell('corner', [16, 16, 16], [32, 32, 32]),
+      testCell('slit', [16, 0, 0], [32, minOpening - 0.1, 16]),
+    ];
+
+    const profile = { pairsTested: 0 };
+    const adjacency = buildAdjacency(cells, profile);
+    expect(adjacency).toContainEqual(['a', 'b']);
+    expect(adjacency).not.toContainEqual(['a', 'corner']);
+    expect(adjacency).not.toContainEqual(['a', 'slit']);
+    expect(profile.pairsTested).toBeLessThan(6);
   });
 
   it('raises world danger and obstacle density with depth', () => {
