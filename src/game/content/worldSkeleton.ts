@@ -25,6 +25,8 @@ export interface WorldSkeletonSample {
 
 const _nearest = new Vector3();
 const _candidate = new Vector3();
+const nodeCache = new Map<string, SkeletonNode>();
+const edgeCache = new Map<string, SkeletonEdge[]>();
 
 export function skeletonMacroCellSize(): number {
   return WORLD_SIZE / GAME_CONFIG.world.skeletonMacroCellsPerAxis;
@@ -42,6 +44,9 @@ export function skeletonMacroCoordForPosition(position: Vector3): ChunkCoord {
 
 export function skeletonNodeAt(coord: ChunkCoord, seed: number): SkeletonNode {
   const wrapped = wrapSkeletonCoord(coord);
+  const key = nodeCacheKey(seed, wrapped);
+  const cached = nodeCache.get(key);
+  if (cached) return cached;
   const size = skeletonMacroCellSize();
   const jitter = size * 0.26;
   const center = new Vector3(
@@ -56,18 +61,24 @@ export function skeletonNodeAt(coord: ChunkCoord, seed: number): SkeletonNode {
     center.y += (seededUnit(seed, wrapped, 13) - 0.5) * jitter;
     center.z += (seededUnit(seed, wrapped, 17) - 0.5) * jitter;
   }
-  return {
+  const node = {
     id: linearIndex(wrapped),
     coord: wrapped,
     position: wrapPosition(center),
     radius: GAME_CONFIG.world.chunkSize * (0.75 + seededUnit(seed, wrapped, 19) * 0.5),
   };
+  nodeCache.set(key, node);
+  return node;
 }
 
 export function skeletonEdgesForMacroCoord(coord: ChunkCoord, seed: number): SkeletonEdge[] {
-  const node = skeletonNodeAt(coord, seed);
+  const wrapped = wrapSkeletonCoord(coord);
+  const cacheKey = nodeCacheKey(seed, wrapped);
+  const cached = edgeCache.get(cacheKey);
+  if (cached) return cached;
+  const node = skeletonNodeAt(wrapped, seed);
   const result: SkeletonEdge[] = [];
-  for (const other of connectedMacroCoords(coord, seed)) {
+  for (const other of connectedMacroCoords(wrapped, seed)) {
     const otherNode = skeletonNodeAt(other, seed);
     if (node.id <= otherNode.id || isWrappedBackbone(coord, other)) {
       result.push({
@@ -77,6 +88,7 @@ export function skeletonEdgesForMacroCoord(coord: ChunkCoord, seed: number): Ske
       });
     }
   }
+  edgeCache.set(cacheKey, result);
   return result;
 }
 
@@ -194,6 +206,10 @@ function uniqueCoords(coords: ChunkCoord[]): ChunkCoord[] {
 
 function seededUnit(seed: number, coord: ChunkCoord, salt: number): number {
   return hashInts(seed, salt, coord.x, coord.y, coord.z) / 0xffffffff;
+}
+
+function nodeCacheKey(seed: number, coord: ChunkCoord): string {
+  return `${seed}:${coord.x},${coord.y},${coord.z}`;
 }
 
 function canonicalCoord(a: ChunkCoord, b: ChunkCoord): ChunkCoord {

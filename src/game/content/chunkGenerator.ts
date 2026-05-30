@@ -13,7 +13,6 @@ import { placeMines } from './mines';
 import { buildGreedyStaticMesh } from './greedyMesher';
 import { detectCaveChunk, generateCaveChunkData } from './caveSystem';
 import { wrapChunkCoord } from '../utils/worldTopology';
-import { depthBelowSurface } from '../utils/depth';
 
 export class ChunkGenerator {
   constructor(private readonly globalSeed: number) {}
@@ -86,14 +85,26 @@ export class ChunkGenerator {
     }
 
     const rng = new SeededRandom(seed);
+    const octoboxProfile = {
+      fieldSampleMs: 0,
+      splitPointsMs: 0,
+      nodesVisited: 0,
+      leavesGenerated: 0,
+      maxDepthReached: 0,
+    };
     const octoboxStart = performance.now();
-    const cells = generateOctoBoxLeaves(bounds, seed);
+    const cells = generateOctoBoxLeaves(bounds, seed, octoboxProfile);
     const octoboxMs = performance.now() - octoboxStart;
-    const navigationStart = performance.now();
+    const adjacencyStart = performance.now();
     const adjacencyAll = buildAdjacency(cells);
+    const adjacencyBuildMs = performance.now() - adjacencyStart;
+    const navigableSetStart = performance.now();
     const freeIds = buildNavigableSet(cells, portals, adjacencyAll, rng, bounds);
+    const navigableSetMs = performance.now() - navigableSetStart;
+    const portalConnectivityStart = performance.now();
     ensurePortalConnectivity(cells, portals, adjacencyAll, freeIds);
-    const navigationMs = performance.now() - navigationStart;
+    const portalConnectivityMs = performance.now() - portalConnectivityStart;
+    const navigationMs = adjacencyBuildMs + navigableSetMs + portalConnectivityMs;
 
     for (const cell of cells) {
       if (freeIds.has(cell.id)) {
@@ -102,7 +113,7 @@ export class ChunkGenerator {
     }
 
     const obstaclesStart = performance.now();
-    const obstacles = depthBelowSurface(bounds.max.y) <= 0 ? [] : placeObstacles(cells, portals, rng);
+    const obstacles = placeObstacles(cells, portals, rng);
     const obstaclesMs = performance.now() - obstaclesStart;
     const staticMeshStart = performance.now();
     const staticMeshData = buildGreedyStaticMesh(
@@ -149,13 +160,22 @@ export class ChunkGenerator {
 
     return {
       chunk,
-      timings: {
-        totalMs: performance.now() - totalStart,
-        octoboxMs,
-        navigationMs,
-        obstaclesMs,
-        staticMeshMs,
-        lootMs,
+        timings: {
+          totalMs: performance.now() - totalStart,
+          octoboxMs,
+          octoboxFieldSampleMs: octoboxProfile.fieldSampleMs,
+          octoboxSplitPointsMs: octoboxProfile.splitPointsMs,
+          octoboxNodesVisited: octoboxProfile.nodesVisited,
+          octoboxLeavesGenerated: octoboxProfile.leavesGenerated,
+          octoboxMaxDepthReached: octoboxProfile.maxDepthReached,
+          navigationMs,
+          adjacencyBuildMs,
+          navigableSetMs,
+          portalConnectivityMs,
+          adjacencyEdges: adjacencyAll.length,
+          obstaclesMs,
+          staticMeshMs,
+          lootMs,
         minesMs,
         serializeMs: 0,
       },

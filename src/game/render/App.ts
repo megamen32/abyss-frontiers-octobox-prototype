@@ -113,6 +113,7 @@ export class RenderApp {
   private smoothFogFar = fogVisibilityDistance();
   private pointerLocked = false;
   private boids: BoidsSystem | null = null;
+  private shaderTime = 0;
   /** World-space points (boss, explosion, etc.) that must also be visible. */
   private externalFocusPoints: Vector3[] = [];
 
@@ -319,7 +320,10 @@ export class RenderApp {
     let staticMeshChunks = 0;
     let maxForwardChunkDist = 0;
     const playerPos = frame.player.position;
-    const mineTime = performance.now() * 0.001;
+    if (!frame.paused) {
+      this.shaderTime += 1 / Math.max(1, frame.fps);
+    }
+    const mineTime = this.shaderTime;
     const nowMs = performance.now();
     const camForward = new Vector3();
     this.camera.getWorldDirection(camForward);

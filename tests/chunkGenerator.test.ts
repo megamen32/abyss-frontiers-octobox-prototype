@@ -191,10 +191,10 @@ describe('ChunkGenerator', () => {
     }
   });
 
-  it('keeps chunks above spawn depth free of obstacles', () => {
+  it('keeps spawn chunk navigable in the wrapped torus', () => {
     const generator = new ChunkGenerator(133742);
-    const chunk = generator.generate({ x: 0, y: 1, z: 0 });
-    expect(chunk.obstacles.length).toBe(0);
+    const chunk = generator.generate({ x: 0, y: 0, z: 0 });
+    expect(chunk.cells.some((cell) => cell.kind === 'free')).toBe(true);
   });
 
   it('raises world danger and obstacle density with depth', () => {
@@ -204,7 +204,7 @@ describe('ChunkGenerator', () => {
     const deep = generator.generate({ x: 0, y: -10, z: 0 });
 
     expect(worldDangerLevel(GAME_CONFIG.world.spawn.y)).toBe(0);
-    expect(aboveSpawn.obstacles.length).toBe(0);
+    expect(aboveSpawn.cells.some((cell) => cell.kind === 'free')).toBe(true);
     expect(worldDangerLevel(deep.bounds.max.y)).toBeGreaterThan(worldDangerLevel(shallow.bounds.max.y));
     expect(bandForDangerLevel(worldDangerLevel(deep.bounds.max.y)).label).toBe('PRESSURE TRENCH');
     const deepNonCave = generator.generate({ x: 0, y: -10, z: 0 });

@@ -1,0 +1,30 @@
+Date/Time:        2026-05-30 15:07:23.672 +0300
+End time:         2026-05-30 15:07:29.202 +0300
+OS Version:       Mac OS X 26.4 (Build 25E5233c)
+
+Reason:           (1 monitored services unresponsive): checkin with service: WindowServer (0 induced crashes) returned not alive with context: unresponsive dispatch queue(s): com.apple.WindowServer.HIDEvents(tid:202144) unresponsive work processor(s): WindowServer main thr
+
+Command:          WindowServer
+Path:             /System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/Resources/WindowServer
+
+Thread 0xa2a    DispatchQueue "com.apple.SkyLight.mtl_submit"(1206)    Thread name "ws_main_thread"
+...
+  ??? (Metal + 149460)
+  ??? (Metal + 149528)
+  ??? (Metal + 124696)
+  ??? (IOGPU + 23016)
+  ??? (IOGPU + 23420)
+  ??? (IOKit + 125664)
+  ??? (IOGPUFamily + 41604)
+  ??? (IOGPUFamily + 234048)
+  ??? (IOGPUFamily + 234764)
+  ??? (IOGPUFamily + 245836)
+  ??? (IOGPUFamily + 238024)
+  ??? (IOGPUFamily + 236260)
+  ??? (AGXG13X + 191164)
+  ??? (AGXG13X + 195336)
+  ??? (AGXG13X + 200280)
+
+Interpretation:
+- WindowServer stopped responding
+- The hang was in the Metal / IOGPU / AGX submission path

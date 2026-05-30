@@ -8,13 +8,19 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:render": "playwright test"
+    "test:render": "playwright test --project=webkit",
+    "test:render:chromium": "playwright test --browser=chromium",
+    "profile:chunks": "vitest run tests/chunkProfile.test.ts",
+    "profile:render": "playwright test e2e/renderMetrics.e2e.ts --project=webkit",
+    "profile:deep-dive": "playwright test e2e/deepDiveProfile.e2e.ts --project=webkit",
+    "profile:all": "npm run profile:chunks && npm run profile:render && npm run profile:deep-dive"
   },
   "dependencies": {
     "three": "^0.177.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
+    "@types/node": "^25.9.1",
     "@types/three": "^0.177.0",
     "@webgpu/types": "^0.1.70",
     "typescript": "^5.8.3",

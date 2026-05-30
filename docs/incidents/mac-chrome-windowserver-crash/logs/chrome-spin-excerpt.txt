@@ -1,0 +1,22 @@
+Date/Time:        2026-05-30 15:00:03.119 +0300
+End time:         2026-05-30 15:00:42.760 +0300
+OS Version:       macOS 26.4 (Build 25E5233c)
+
+Reason:           Slow response to HID event
+Affected Process: Google Chrome (Chrome) [56449]
+Event:            spin
+Duration:         39.64s
+
+Low Power Mode:   Enabled
+
+Slow HID event:
+HID event LeftMouseDown started 29.7s before time index 1
+Event                                            Time Index        Delay  Process/Thread
+hid_translation_state_append_wrapped_nxevent         1-867   40000.000ms  WindowServer [170] thread 0x2eb99
+PullEventsFromWindowServerOnConnection           No samples     15.000ms  Google Chrome (Chrome) [56449] thread 0x2a49b
+CreateAndPostEventWithCGEvent                    No samples      1.400ms  Google Chrome (Chrome) [56449] thread 0x2a474
+Entry to NSApplication sendEvent                 No samples     18.000ms  Google Chrome (Chrome) [56449] thread 0x2a474
+
+Interpretation:
+- Chrome was the affected foreground process during the stall
+- HID/event handling degraded badly before the eventual WindowServer watchdog timeout

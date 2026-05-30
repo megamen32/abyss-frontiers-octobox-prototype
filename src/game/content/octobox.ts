@@ -5,17 +5,50 @@ import { SeededRandom } from '../utils/rng';
 import { worldDangerLevel } from '../utils/depth';
 import { sampleWorldField } from './worldField';
 
-export function generateOctoBoxLeaves(bounds: AABB, seed: number): LeafCell[] {
+export interface OctoboxProfile {
+  fieldSampleMs: number;
+  splitPointsMs: number;
+  nodesVisited: number;
+  leavesGenerated: number;
+  maxDepthReached: number;
+}
+
+export function generateOctoBoxLeaves(bounds: AABB, seed: number, profile?: OctoboxProfile): LeafCell[] {
   const rng = new SeededRandom(seed);
   const leaves: LeafCell[] = [];
-  split(bounds, 0, 'root', rng, leaves, seed);
+  if (profile) {
+    profile.fieldSampleMs = 0;
+    profile.splitPointsMs = 0;
+    profile.nodesVisited = 0;
+    profile.leavesGenerated = 0;
+    profile.maxDepthReached = 0;
+  }
+  split(bounds, 0, 'root', rng, leaves, seed, profile);
   return leaves;
 }
 
-function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leaves: LeafCell[], seed: number): void {
+function split(
+  bounds: AABB,
+  depth: number,
+  id: string,
+  rng: SeededRandom,
+  leaves: LeafCell[],
+  seed: number,
+  profile?: OctoboxProfile,
+): void {
+  if (profile) {
+    profile.nodesVisited += 1;
+    if (depth > profile.maxDepthReached) {
+      profile.maxDepthReached = depth;
+    }
+  }
   const size = bounds.max.clone().sub(bounds.min);
   const minSize = Math.min(size.x, size.y, size.z);
+  const fieldSampleStart = profile ? performance.now() : 0;
   const fieldBias = computeFieldBias(bounds, seed);
+  if (profile) {
+    profile.fieldSampleMs += performance.now() - fieldSampleStart;
+  }
   const density = estimateDensity(bounds, fieldBias);
   const divisions = chooseDivisions(density);
   const minLeafSize = getMinLeafSize();
@@ -30,19 +63,26 @@ function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leave
 
   if (shouldStop) {
     leaves.push({ id, depth, bounds, kind: 'empty', fieldBias });
+    if (profile) {
+      profile.leavesGenerated += 1;
+    }
     return;
   }
 
+  const splitPointsStart = profile ? performance.now() : 0;
   const splitX = buildSplitPoints(bounds.min.x, bounds.max.x, divisions, rng, minLeafSize);
   const splitY = buildSplitPoints(bounds.min.y, bounds.max.y, divisions, rng, minLeafSize);
   const splitZ = buildSplitPoints(bounds.min.z, bounds.max.z, divisions, rng, minLeafSize);
+  if (profile) {
+    profile.splitPointsMs += performance.now() - splitPointsStart;
+  }
   let childIndex = 0;
   for (let xi = 0; xi < divisions; xi += 1) {
     for (let yi = 0; yi < divisions; yi += 1) {
       for (let zi = 0; zi < divisions; zi += 1) {
         const childMin = new Vector3(splitX[xi], splitY[yi], splitZ[zi]);
         const childMax = new Vector3(splitX[xi + 1], splitY[yi + 1], splitZ[zi + 1]);
-        split({ min: childMin, max: childMax }, depth + 1, `${id}-${childIndex}`, rng, leaves, seed);
+        split({ min: childMin, max: childMax }, depth + 1, `${id}-${childIndex}`, rng, leaves, seed, profile);
         childIndex += 1;
       }
     }

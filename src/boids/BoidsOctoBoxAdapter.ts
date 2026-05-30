@@ -1,7 +1,7 @@
 import { Vector3 } from 'three'
 import type { ChunkData, LeafCell } from '../game/types'
 import type { BoidWorldCell } from './BoidsTypes'
-import { aabbCenter, aabbSize } from '../game/utils/chunk'
+import { aabbCenter, aabbSize, chunkKey, worldToChunkCoord } from '../game/utils/chunk'
 import { shortestWrappedDelta } from '../game/utils/worldTopology'
 import { buildWorldFieldCache, sampleCachedWorldField, type WorldFieldCache } from '../game/content/worldFieldCache'
 
@@ -12,16 +12,20 @@ export class BoidsOctoBoxAdapter {
   private cellIdMap = new Map<string, number>()
   private adjacencyMap = new Map<string, Set<string>>()
   private fieldCaches = new Map<string, WorldFieldCache>()
+  private chunkCellIds = new Map<string, number[]>()
   private dirty = true
 
-  syncChunks(added: ChunkData[], removed: string[]): void {
+  syncChunks(added: ChunkData[], removed: string[]): boolean {
+    if (added.length === 0 && removed.length === 0) return false
     for (const key of removed) {
       this.chunks.delete(key)
+      this.fieldCaches.delete(key)
     }
     for (const chunk of added) {
       this.chunks.set(chunk.key, chunk)
     }
     this.dirty = true
+    return true
   }
 
   rebuild(): void {
@@ -32,11 +36,16 @@ export class BoidsOctoBoxAdapter {
     this.worldCells = []
     this.cellIdMap.clear()
     this.adjacencyMap.clear()
-    this.fieldCaches.clear()
+    this.chunkCellIds.clear()
 
     let cellIndex = 0
     for (const [chunkKey, chunk] of this.chunks) {
-      const cache = buildWorldFieldCache(chunk.bounds, chunk.seed)
+      let cache = this.fieldCaches.get(chunkKey)
+      if (!cache) {
+        cache = buildWorldFieldCache(chunk.bounds, chunk.seed)
+        this.fieldCaches.set(chunkKey, cache)
+      }
+      const chunkCells: number[] = []
       this.fieldCaches.set(chunkKey, cache)
       for (const cell of chunk.cells) {
         if (cell.kind !== 'free') continue
@@ -63,6 +72,7 @@ export class BoidsOctoBoxAdapter {
           isFree: true,
           connectedNeighborIds: [],
         })
+        chunkCells.push(cellIndex)
 
         if (!this.adjacencyMap.has(globalId)) {
           this.adjacencyMap.set(globalId, new Set())
@@ -70,6 +80,7 @@ export class BoidsOctoBoxAdapter {
 
         cellIndex++
       }
+      this.chunkCellIds.set(chunkKey, chunkCells)
     }
 
     for (const [, chunk] of this.chunks) {
@@ -114,18 +125,26 @@ export class BoidsOctoBoxAdapter {
 
   findCellByPosition(position: Vector3): number {
     this.rebuild()
-    for (let i = 0; i < this.worldCells.length; i++) {
-      const c = this.worldCells[i]
+    const ids = this.chunkCellIds.get(chunkKey(worldToChunkCoord(position))) ?? this.allCellIds()
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]
+      const c = this.worldCells[id]
       if (!c.isFree) continue
       if (
         position.x >= c.boundsMin.x && position.x <= c.boundsMax.x &&
         position.y >= c.boundsMin.y && position.y <= c.boundsMax.y &&
         position.z >= c.boundsMin.z && position.z <= c.boundsMax.z
       ) {
-        return i
+        return id
       }
     }
     return -1
+  }
+
+  private allCellIds(): number[] {
+    const ids: number[] = []
+    for (let i = 0; i < this.worldCells.length; i++) ids.push(i)
+    return ids
   }
 
   getConnectedNeighborCellIds(cellId: number): number[] {
@@ -168,5 +187,7 @@ export class BoidsOctoBoxAdapter {
     this.worldCells = []
     this.cellIdMap.clear()
     this.adjacencyMap.clear()
+    this.fieldCaches.clear()
+    this.chunkCellIds.clear()
   }
 }

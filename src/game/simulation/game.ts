@@ -271,7 +271,7 @@ export class Game {
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const predictor = ShipPredictor.forPlayer(this.player);
-    this.boids.update(dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
+    this.boids.update(this.paused ? 0 : dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
     this.syncMineStateFromBoids();
     const renderStart = performance.now();
     this.render.updateFrame({

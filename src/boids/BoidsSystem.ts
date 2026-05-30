@@ -249,8 +249,9 @@ export class BoidsSystem {
   }
 
   syncChunks(added: ChunkData[], removed: string[]): void {
-    this.adapter.syncChunks(added, removed)
-    this.cellDataDirty = true
+    if (this.adapter.syncChunks(added, removed)) {
+      this.cellDataDirty = true
+    }
   }
 
   upsertKinematicBoid(

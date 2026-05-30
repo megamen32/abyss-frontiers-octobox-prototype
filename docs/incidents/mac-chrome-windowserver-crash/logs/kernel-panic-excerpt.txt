@@ -1,0 +1,24 @@
+Timestamp: 2026-05-30 15:09:40 +0300
+OS: macOS 26.4 (25E5233c)
+Hardware: MacBookPro18,2
+
+panicString:
+panic(cpu 1 caller 0xfffffe004bf8fc94): userspace watchdog timeout: no successful checkins from WindowServer (2 induced crashes) in 120 seconds
+WindowServer has not exited since first loaded
+service: logd, total successful checkins in 6290 seconds: 625, last successful checkin: 0 seconds ago
+service: WindowServer (2 induced crashes), total successful checkins in 6242 seconds: 606, last successful checkin: 120 seconds ago
+service: opendirectoryd, total successful checkins in 6290 seconds: 624, last successful checkin: 0 seconds ago
+service: configd, total successful checkins in 6290 seconds: 625, last successful checkin: 0 seconds ago
+
+Kernel Extensions in backtrace:
+com.apple.driver.AppleARMWatchdogTimer(1.0)
+
+Additional panic payload notes:
+- Stackshot succeeded
+- Kernel coredump completed
+- DCP coredump completed
+- GFX coredump completed
+
+Interpretation:
+- The machine rebooted because watchdogd concluded WindowServer had stopped checking in
+- This was a full system-level failure, not a normal application crash

@@ -165,7 +165,16 @@ export interface ChunkSyncResult {
 export interface ChunkBuildTimings {
   totalMs: number;
   octoboxMs: number;
+  octoboxFieldSampleMs?: number;
+  octoboxSplitPointsMs?: number;
+  octoboxNodesVisited?: number;
+  octoboxLeavesGenerated?: number;
+  octoboxMaxDepthReached?: number;
   navigationMs: number;
+  adjacencyBuildMs?: number;
+  navigableSetMs?: number;
+  portalConnectivityMs?: number;
+  adjacencyEdges?: number;
   obstaclesMs: number;
   staticMeshMs: number;
   lootMs: number;
