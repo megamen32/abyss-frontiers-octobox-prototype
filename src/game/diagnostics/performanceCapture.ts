@@ -18,6 +18,7 @@ const METRIC_KEYS: Array<keyof DebugTimingSnapshot> = [
   'workerOctoboxMs',
   'workerStaticMeshMs',
   'workerSerializeMs',
+  'workerCount',
   'drawCalls',
   'drawTriangles',
   'drawLines',

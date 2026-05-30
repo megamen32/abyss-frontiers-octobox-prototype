@@ -49,6 +49,20 @@ export class BoidsSystem {
     spawnCount: 0,
     despawnCount: 0,
     avgNeighbors: 0,
+    neighborResultAllocations: 0,
+    heavyUpdates: 0,
+    cheapUpdates: 0,
+    boidsFullCount: 0,
+    boidsClusterCount: 0,
+    boidsPooledCount: 0,
+    boidsCulledCount: 0,
+    activeClusterCount: 0,
+    clusterSplits: 0,
+    clusterMerges: 0,
+    boidsSkippedFrames: 0,
+    boidsEffectiveUpdateHz: 0,
+    boidsCollisionQueries: 0,
+    boidsShaderLodCounts: { near: 0, cluster: 0, hidden: 0 },
   }
   private gpuBoidsUploaded = false
   private cellDataDirty = true
@@ -152,6 +166,20 @@ export class BoidsSystem {
     this.debugStats.integrationMs = stats.integrationMs
     this.debugStats.mineUpdateMs = stats.mineUpdateMs
     this.debugStats.avgNeighbors = stats.avgNeighbors
+    this.debugStats.neighborResultAllocations = stats.neighborResultAllocations
+    this.debugStats.heavyUpdates = stats.heavyUpdates
+    this.debugStats.cheapUpdates = stats.cheapUpdates
+    this.debugStats.boidsFullCount = stats.boidsFullCount
+    this.debugStats.boidsClusterCount = stats.boidsClusterCount
+    this.debugStats.boidsPooledCount = stats.boidsPooledCount
+    this.debugStats.boidsCulledCount = stats.boidsCulledCount
+    this.debugStats.activeClusterCount = stats.activeClusterCount
+    this.debugStats.clusterSplits = stats.clusterSplits
+    this.debugStats.clusterMerges = stats.clusterMerges
+    this.debugStats.boidsSkippedFrames = stats.boidsSkippedFrames
+    this.debugStats.boidsEffectiveUpdateHz = stats.boidsEffectiveUpdateHz
+    this.debugStats.boidsCollisionQueries = stats.boidsCollisionQueries
+    this.debugStats.boidsShaderLodCounts = stats.boidsShaderLodCounts
     this.debugStats.activeCells = this.adapter.getActiveBoidCells(playerPosition, this.config.simulationRadius).length
     this.debugStats.gridOverflow = 0
     this.debugStats.avgBoidsPerCell = this.cpuSim.getActiveCount() > 0 && this.debugStats.activeCells > 0
@@ -235,6 +263,20 @@ export class BoidsSystem {
     this.debugStats.integrationMs = 0
     this.debugStats.mineUpdateMs = 0
     this.debugStats.avgNeighbors = 0
+    this.debugStats.neighborResultAllocations = 0
+    this.debugStats.heavyUpdates = 0
+    this.debugStats.cheapUpdates = 0
+    this.debugStats.boidsFullCount = activeBoids
+    this.debugStats.boidsClusterCount = 0
+    this.debugStats.boidsPooledCount = 0
+    this.debugStats.boidsCulledCount = 0
+    this.debugStats.activeClusterCount = 0
+    this.debugStats.clusterSplits = 0
+    this.debugStats.clusterMerges = 0
+    this.debugStats.boidsSkippedFrames = 0
+    this.debugStats.boidsEffectiveUpdateHz = activeBoids > 0 ? 60 : 0
+    this.debugStats.boidsCollisionQueries = 0
+    this.debugStats.boidsShaderLodCounts = { near: activeBoids, cluster: 0, hidden: 0 }
   }
 
   private uploadCellData(cells: ReturnType<typeof this.adapter.getActiveBoidCells>): void {
@@ -345,6 +387,11 @@ export class BoidsSystem {
       `Avoid: ${s.avoidanceMs.toFixed(1)}ms`,
       `Integrate: ${s.integrationMs.toFixed(1)}ms`,
       `Mine: ${s.mineUpdateMs.toFixed(1)}ms`,
+      `Neighbor allocs: ${s.neighborResultAllocations}`,
+      `Heavy/Cheap: ${s.heavyUpdates}/${s.cheapUpdates}`,
+      `LOD full/cluster/pool/cull: ${s.boidsFullCount}/${s.boidsClusterCount}/${s.boidsPooledCount}/${s.boidsCulledCount}`,
+      `Clusters: ${s.activeClusterCount}`,
+      `Hz: ${s.boidsEffectiveUpdateHz.toFixed(1)}`,
       `Render: ${s.renderMs.toFixed(1)}ms`,
     ].join('  |  ')
   }

@@ -70,6 +70,28 @@ export interface BoidLODConfig {
   cullDistance: number
 }
 
+export type BoidSimLevel = 'full' | 'cluster' | 'pooled' | 'culled'
+export type BoidShaderLod = 'near' | 'cluster' | 'hidden'
+
+export interface BoidCluster {
+  id: number
+  center: [number, number, number]
+  velocity: [number, number, number]
+  count: number
+  spread: number
+  seed: number
+  lastFullSolveFrame: number
+}
+
+export interface DormantBoidGroup {
+  chunkId: string
+  species: 'companionFish' | 'smallShip' | 'ambient'
+  count: number
+  seed: number
+  lastKnownCenter: [number, number, number]
+  trendVelocity: [number, number, number]
+}
+
 export interface BoidVisualConfig {
   type: BoidVisualType
   scale: number
@@ -88,6 +110,7 @@ export interface BoidFallbackConfig {
 export interface BoidsConfig {
   enabled: boolean
   forceCPU?: boolean
+  cpuUpdateStride?: number
   maxBoids: number
   initialBoids: number
   simulationRadius: number
@@ -138,6 +161,8 @@ export interface BoidState {
   velocity: [number, number, number]
   seed: number
   typeId: number
+  simLevel?: BoidSimLevel
+  clusterId?: number
   behavior: BoidBehavior
   stateTimer: number
   life: number
@@ -184,6 +209,24 @@ export interface BoidsDebugStats {
   spawnCount: number
   despawnCount: number
   avgNeighbors: number
+  neighborResultAllocations: number
+  heavyUpdates: number
+  cheapUpdates: number
+  boidsFullCount: number
+  boidsClusterCount: number
+  boidsPooledCount: number
+  boidsCulledCount: number
+  activeClusterCount: number
+  clusterSplits: number
+  clusterMerges: number
+  boidsSkippedFrames: number
+  boidsEffectiveUpdateHz: number
+  boidsCollisionQueries: number
+  boidsShaderLodCounts: {
+    near: number
+    cluster: number
+    hidden: number
+  }
 }
 
 export interface BoidsSystemParams {

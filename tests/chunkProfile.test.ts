@@ -203,8 +203,17 @@ describe('Chunk profiling', () => {
 
     expect(samples.length).toBeGreaterThan(0);
     expect(topSlowChunks.length).toBeGreaterThan(0);
+    expect(Math.max(...topSlowChunks.map((entry) => entry.adjacencyBuildMs))).toBeLessThan(8);
+    expect(Math.max(...topSlowChunks.map((entry) => entry.totalMs))).toBeLessThan(strictStandaloneProfile() ? 40 : 45);
+    expect(summary.every((entry) => entry.maximums.adjacencyExactChecks >= 0)).toBe(true);
+    expect(summary.every((entry) => entry.maximums.adjacencyPlanesVisited >= 0)).toBe(true);
+    expect(summary.every((entry) => entry.maximums.adjacencyEdges >= 0)).toBe(true);
   }, 30_000);
 });
+
+function strictStandaloneProfile(): boolean {
+  return process.argv.some((arg) => arg.includes('chunkProfile.test.ts'));
+}
 
 function makeSample(label: string, coord: ChunkCoord, chunk: ChunkData, timings: ChunkBuildTimings): ChunkProfileSample {
   return {

@@ -17,9 +17,10 @@ import { chunkKey, worldToChunkCoord } from '../utils/chunk';
 import { shortestWrappedDistance, wrappedChunkDistance, wrapChunkCoord } from '../utils/worldTopology';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
+import { createRuntimeBoidsConfig } from './runtimeBoidsConfig';
 import { BoidsSystem } from '../../boids/BoidsSystem';
-import { BoidBehavior, type BoidsConfig } from '../../boids/BoidsTypes';
-import { MINE_TYPE, UNIFIED_WORLD_BOIDS_CONFIG } from '../../boids/BoidsConfig';
+import { BoidBehavior } from '../../boids/BoidsTypes';
+import { MINE_TYPE } from '../../boids/BoidsConfig';
 
 const DEBUG_SETTINGS_KEYS = {
   debugEnabled: 'abyss3.debugEnabled',
@@ -587,22 +588,6 @@ function updateObstacleMotion(chunk: ChunkData, dt: number): void {
     }
     obstacle.phase += dt * obstacle.angularSpeed;
   }
-}
-
-function createRuntimeBoidsConfig(): BoidsConfig {
-  const params = new URLSearchParams(window.location.search);
-  const mobile = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820;
-  const hasWebGPU = 'gpu' in navigator;
-  const forceCPU = params.has('cpu') || !hasWebGPU;
-  const maxBoids = mobile ? 1000 : forceCPU ? 2000 : UNIFIED_WORLD_BOIDS_CONFIG.maxBoids;
-  const initialBoids = mobile ? 1000 : forceCPU ? 2000 : UNIFIED_WORLD_BOIDS_CONFIG.initialBoids;
-  return {
-    ...UNIFIED_WORLD_BOIDS_CONFIG,
-    maxBoids,
-    initialBoids,
-    fallback: { cpuMaxBoids: maxBoids },
-    forceCPU,
-  };
 }
 
 function faceFromDirection(direction: Vector3): Face {

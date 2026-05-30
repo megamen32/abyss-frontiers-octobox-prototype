@@ -209,6 +209,7 @@ export interface DebugTimingSnapshot {
   workerOctoboxMs: number;
   workerStaticMeshMs: number;
   workerSerializeMs: number;
+  workerCount: number;
   drawCalls: number;
   drawTriangles: number;
   drawLines: number;

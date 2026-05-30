@@ -88,6 +88,7 @@ export class BoidsRenderer {
     for (let i = 0; i < boids.length && visible < this.maxBoids; i++) {
       const b = boids[i]
       if (b.flags === BoidFlags.DEAD || b.flags === BoidFlags.SLEEPING) continue
+      if (b.simLevel === 'pooled' || b.simLevel === 'culled') continue
 
       const o = visible * 3
       const o4 = visible * 4

@@ -29,9 +29,10 @@ const BOID_STRUCT_SIZE = 64
 const UNIFORM_SIZE = 256
 
 export async function initGPUResources(config: BoidsConfig): Promise<BoidsGPUResources | null> {
-  if (!navigator.gpu) return null
+  const gpu = globalThis.navigator?.gpu
+  if (!gpu) return null
 
-  const adapter = await navigator.gpu.requestAdapter()
+  const adapter = await gpu.requestAdapter()
   if (!adapter) return null
 
   const device = await adapter.requestDevice({

@@ -446,6 +446,7 @@ export class Hud {
         `calls ${s.timings.drawCalls}  ` +
         `tris ${s.timings.drawTriangles}  ` +
         `chunks ${s.timings.visibleChunks}  ` +
+        `workers ${s.timings.workerCount}  ` +
         `worker ${s.timings.workerTotalMs.toFixed(1)}`;
       this.debugTuning.textContent =
         `accel ${s.tuning.baseAcceleration.toFixed(1)}  ` +
@@ -467,6 +468,12 @@ export class Hud {
           `int ${bd.integrationMs.toFixed(1)}  ` +
           `mine ${bd.mineUpdateMs.toFixed(1)}  ` +
           `avgN ${bd.avgNeighbors.toFixed(1)}  ` +
+          `alloc ${bd.neighborResultAllocations}  ` +
+          `heavy ${bd.heavyUpdates}/${bd.cheapUpdates}  ` +
+          `lod ${bd.boidsFullCount}/${bd.boidsClusterCount}/${bd.boidsPooledCount}/${bd.boidsCulledCount}  ` +
+          `clusters ${bd.activeClusterCount}  ` +
+          `hz ${bd.boidsEffectiveUpdateHz.toFixed(0)}  ` +
+          `skip ${bd.boidsSkippedFrames}  ` +
           `sim ${bd.simulationMs.toFixed(1)}  ` +
           `render ${bd.renderMs.toFixed(1)}`;
       }

@@ -6,6 +6,7 @@ import { BoidsCPUSimulation } from '../src/boids/BoidsCPUSimulation'
 import { BoidsOctoBoxAdapter } from '../src/boids/BoidsOctoBoxAdapter'
 import { AMBIENT_FISH_TYPE, COMPANION_FISH_TYPE, MINE_TYPE, UNIFIED_WORLD_BOIDS_CONFIG } from '../src/boids/BoidsConfig'
 import { BoidBehavior } from '../src/boids/BoidsTypes'
+import { createRuntimeBoidsConfig } from '../src/game/simulation/runtimeBoidsConfig'
 import type { AABB, ChunkData, LeafCell } from '../src/game/types'
 import { SeededRandom } from '../src/game/utils/rng'
 
@@ -14,6 +15,7 @@ interface BoidsProfileScenario {
   ambient: number
   companion: number
   mines: number
+  cpuUpdateStride: number
 }
 
 interface BoidsProfileFrame {
@@ -25,11 +27,25 @@ interface BoidsProfileFrame {
   integrationMs: number
   mineUpdateMs: number
   avgNeighbors: number
+  neighborResultAllocations: number
+  heavyUpdates: number
+  cheapUpdates: number
+  boidsFullCount: number
+  boidsClusterCount: number
+  boidsPooledCount: number
+  boidsCulledCount: number
+  activeClusterCount: number
+  clusterSplits: number
+  clusterMerges: number
+  boidsSkippedFrames: number
+  boidsEffectiveUpdateHz: number
+  boidsCollisionQueries: number
 }
 
 interface BoidsProfileSummary {
   label: string
   count: number
+  cpuUpdateStride: number
   p50TotalMs: number
   p95TotalMs: number
   p99TotalMs: number
@@ -39,13 +55,24 @@ interface BoidsProfileSummary {
   p95IntegrationMs: number
   p95MineUpdateMs: number
   avgNeighbors: number
+  p95NeighborResultAllocations: number
+  avgHeavyUpdates: number
+  avgCheapUpdates: number
+  avgFullCount: number
+  avgClusterCount: number
+  avgPooledCount: number
+  avgCulledCount: number
+  avgActiveClusterCount: number
+  p95SkippedFrames: number
+  avgEffectiveUpdateHz: number
+  p95CollisionQueries: number
 }
 
 describe('Boids profiling', () => {
   it('writes deterministic CPU boids timing report for mobile and desktop scale targets', async () => {
     const scenarios: BoidsProfileScenario[] = [
-      { label: 'mobile_1k', ambient: 720, companion: 240, mines: 40 },
-      { label: 'desktop_6k', ambient: 4500, companion: 1200, mines: 300 },
+      { label: 'mobile_1k', ambient: 720, companion: 240, mines: 40, cpuUpdateStride: 2 },
+      { label: 'desktop_6k', ambient: 4500, companion: 1200, mines: 300, cpuUpdateStride: 3 },
     ]
     const summaries: BoidsProfileSummary[] = []
     const frames: Record<string, BoidsProfileFrame[]> = {}
@@ -53,20 +80,26 @@ describe('Boids profiling', () => {
     for (const scenario of scenarios) {
       const frameSamples = runScenario(scenario)
       frames[scenario.label] = frameSamples
-      summaries.push(summarizeScenario(scenario.label, scenario.ambient + scenario.companion + scenario.mines, frameSamples))
+      summaries.push(summarizeScenario(scenario, frameSamples))
     }
 
     const outputDirectory = resolve(process.cwd(), 'artifacts/performance')
     await mkdir(outputDirectory, { recursive: true })
     await writeFile(
       resolve(outputDirectory, 'boids-profile.json'),
-      `${JSON.stringify({ generatedAt: new Date().toISOString(), summaries, frames }, null, 2)}\n`,
+      `${JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        runtimePolicy: buildRuntimePolicySummary(),
+        summaries,
+        frames,
+      }, null, 2)}\n`,
       'utf8',
     )
 
     for (const summary of summaries) {
       console.log(
         `${summary.label}: count=${summary.count}`
+        + ` stride=${summary.cpuUpdateStride}`
         + ` p50=${summary.p50TotalMs.toFixed(2)}`
         + ` p95=${summary.p95TotalMs.toFixed(2)}`
         + ` p99=${summary.p99TotalMs.toFixed(2)}`
@@ -75,7 +108,13 @@ describe('Boids profiling', () => {
         + ` avoid=${summary.p95AvoidanceMs.toFixed(2)}`
         + ` integrate=${summary.p95IntegrationMs.toFixed(2)}`
         + ` mine=${summary.p95MineUpdateMs.toFixed(2)}`
-        + ` avgNeighbors=${summary.avgNeighbors.toFixed(1)}`,
+        + ` avgNeighbors=${summary.avgNeighbors.toFixed(1)}`
+        + ` alloc=${summary.p95NeighborResultAllocations.toFixed(0)}`
+        + ` lod=${summary.avgFullCount.toFixed(0)}/${summary.avgClusterCount.toFixed(0)}/${summary.avgPooledCount.toFixed(0)}/${summary.avgCulledCount.toFixed(0)}`
+        + ` clusters=${summary.avgActiveClusterCount.toFixed(0)}`
+        + ` hz=${summary.avgEffectiveUpdateHz.toFixed(1)}`
+        + ` heavy=${summary.avgHeavyUpdates.toFixed(0)}`
+        + ` cheap=${summary.avgCheapUpdates.toFixed(0)}`,
       )
     }
 
@@ -83,8 +122,42 @@ describe('Boids profiling', () => {
     expect(summaries[1].count).toBe(6000)
     expect(summaries.every((summary) => Number.isFinite(summary.p95TotalMs))).toBe(true)
     expect(summaries[0].p95TotalMs).toBeLessThan(33)
+    expect(summaries[1].p95TotalMs).toBeLessThan(33)
+    expect(summaries.every((summary) => summary.p95NeighborResultAllocations === 0)).toBe(true)
+    expect(summaries.every((summary) => summary.avgClusterCount > 0)).toBe(true)
+    expect(summaries[1].avgPooledCount).toBeGreaterThan(0)
+    expect(summaries.every((summary) => summary.avgEffectiveUpdateHz < 60)).toBe(true)
   }, 30_000)
 })
+
+function buildRuntimePolicySummary(): Record<string, { maxBoids: number; initialBoids: number; forceCPU: boolean; cpuFallbackBoids: number; cpuUpdateStride: number }> {
+  return {
+    mobileWebGPU: summarizeRuntimeConfig(createRuntimeBoidsConfig({
+      maxTouchPoints: 5,
+      coarsePointer: true,
+      viewportWidth: 390,
+      hasWebGPU: true,
+    })),
+    desktopWebGPU: summarizeRuntimeConfig(createRuntimeBoidsConfig({
+      viewportWidth: 1440,
+      hasWebGPU: true,
+    })),
+    desktopCPUFallback: summarizeRuntimeConfig(createRuntimeBoidsConfig({
+      viewportWidth: 1440,
+      hasWebGPU: false,
+    })),
+  }
+}
+
+function summarizeRuntimeConfig(config: ReturnType<typeof createRuntimeBoidsConfig>): { maxBoids: number; initialBoids: number; forceCPU: boolean; cpuFallbackBoids: number; cpuUpdateStride: number } {
+  return {
+    maxBoids: config.maxBoids,
+    initialBoids: config.initialBoids,
+    forceCPU: config.forceCPU === true,
+    cpuFallbackBoids: config.fallback.cpuMaxBoids,
+    cpuUpdateStride: config.cpuUpdateStride ?? 1,
+  }
+}
 
 function runScenario(scenario: BoidsProfileScenario): BoidsProfileFrame[] {
   const adapter = new BoidsOctoBoxAdapter()
@@ -96,6 +169,7 @@ function runScenario(scenario: BoidsProfileScenario): BoidsProfileFrame[] {
     maxBoids: count,
     initialBoids: 0,
     simulationRadius: 900,
+    cpuUpdateStride: scenario.cpuUpdateStride,
     fallback: { cpuMaxBoids: count },
   }, adapter)
   seedBoids(sim, scenario)
@@ -113,7 +187,7 @@ function runScenario(scenario: BoidsProfileScenario): BoidsProfileFrame[] {
   }
 
   const samples: BoidsProfileFrame[] = []
-  for (let frame = 0; frame < 12; frame += 1) {
+  for (let frame = 0; frame < 40; frame += 1) {
     const start = performance.now()
     sim.update(1 / 60, player, camera, playerVelocity, playerForward, predictor)
     const totalMs = performance.now() - start
@@ -127,6 +201,19 @@ function runScenario(scenario: BoidsProfileScenario): BoidsProfileFrame[] {
       integrationMs: stats.integrationMs,
       mineUpdateMs: stats.mineUpdateMs,
       avgNeighbors: stats.avgNeighbors,
+      neighborResultAllocations: stats.neighborResultAllocations,
+      heavyUpdates: stats.heavyUpdates,
+      cheapUpdates: stats.cheapUpdates,
+      boidsFullCount: stats.boidsFullCount,
+      boidsClusterCount: stats.boidsClusterCount,
+      boidsPooledCount: stats.boidsPooledCount,
+      boidsCulledCount: stats.boidsCulledCount,
+      activeClusterCount: stats.activeClusterCount,
+      clusterSplits: stats.clusterSplits,
+      clusterMerges: stats.clusterMerges,
+      boidsSkippedFrames: stats.boidsSkippedFrames,
+      boidsEffectiveUpdateHz: stats.boidsEffectiveUpdateHz,
+      boidsCollisionQueries: stats.boidsCollisionQueries,
     })
   }
   return samples
@@ -161,9 +248,9 @@ function upsertProfileBoid(
   const speed = rng.range(3, 18)
   sim.upsertManagedBoid(
     `profile-${index}`,
-    rng.range(96, 416),
-    rng.range(96, 416),
-    rng.range(96, 416),
+    rng.range(48, 464),
+    rng.range(48, 464),
+    rng.range(48, 464),
     Math.cos(angle) * Math.cos(pitch) * speed,
     Math.sin(pitch) * speed,
     Math.sin(angle) * Math.cos(pitch) * speed,
@@ -174,10 +261,11 @@ function upsertProfileBoid(
   )
 }
 
-function summarizeScenario(label: string, count: number, frames: BoidsProfileFrame[]): BoidsProfileSummary {
+function summarizeScenario(scenario: BoidsProfileScenario, frames: BoidsProfileFrame[]): BoidsProfileSummary {
   return {
-    label,
-    count,
+    label: scenario.label,
+    count: scenario.ambient + scenario.companion + scenario.mines,
+    cpuUpdateStride: scenario.cpuUpdateStride,
     p50TotalMs: percentile(frames.map((frame) => frame.totalMs), 0.5),
     p95TotalMs: percentile(frames.map((frame) => frame.totalMs), 0.95),
     p99TotalMs: percentile(frames.map((frame) => frame.totalMs), 0.99),
@@ -187,7 +275,22 @@ function summarizeScenario(label: string, count: number, frames: BoidsProfileFra
     p95IntegrationMs: percentile(frames.map((frame) => frame.integrationMs), 0.95),
     p95MineUpdateMs: percentile(frames.map((frame) => frame.mineUpdateMs), 0.95),
     avgNeighbors: frames.reduce((sum, frame) => sum + frame.avgNeighbors, 0) / frames.length,
+    p95NeighborResultAllocations: percentile(frames.map((frame) => frame.neighborResultAllocations), 0.95),
+    avgHeavyUpdates: average(frames.map((frame) => frame.heavyUpdates)),
+    avgCheapUpdates: average(frames.map((frame) => frame.cheapUpdates)),
+    avgFullCount: average(frames.map((frame) => frame.boidsFullCount)),
+    avgClusterCount: average(frames.map((frame) => frame.boidsClusterCount)),
+    avgPooledCount: average(frames.map((frame) => frame.boidsPooledCount)),
+    avgCulledCount: average(frames.map((frame) => frame.boidsCulledCount)),
+    avgActiveClusterCount: average(frames.map((frame) => frame.activeClusterCount)),
+    p95SkippedFrames: percentile(frames.map((frame) => frame.boidsSkippedFrames), 0.95),
+    avgEffectiveUpdateHz: average(frames.map((frame) => frame.boidsEffectiveUpdateHz)),
+    p95CollisionQueries: percentile(frames.map((frame) => frame.boidsCollisionQueries), 0.95),
   }
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
 function percentile(values: number[], p: number): number {
