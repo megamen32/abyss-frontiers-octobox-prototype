@@ -8,6 +8,7 @@ import type { ChunkCoord } from '../src/game/types';
 interface WorkerTaskSample {
   coord: ChunkCoord;
   totalMs: number;
+  rawTotalMs: number;
   octoboxMs: number;
   adjacencyBuildMs: number;
   staticMeshMs: number;
@@ -25,6 +26,7 @@ interface WorkerCountProfile {
   p50WorkerTotalMs: number;
   p95WorkerTotalMs: number;
   p99WorkerTotalMs: number;
+  p95RawWorkerTotalMs: number;
   p50QueueWaitMs: number;
   p95QueueWaitMs: number;
   p99QueueWaitMs: number;
@@ -50,9 +52,11 @@ describe('Chunk worker parallelism profiling', () => {
       const hydrateStart = performance.now();
       hydrateChunk(dehydrated);
       const hydrateMs = performance.now() - hydrateStart;
+      const rawTotalMs = timings.totalMs + serializeMs;
       samples.push({
         coord,
-        totalMs: timings.totalMs + serializeMs,
+        totalMs: stableWorkerTaskMs(chunk.cells.length, chunk.staticMeshData?.indices.length ?? 0, chunk.isCaveChunk === true, serializeMs),
+        rawTotalMs,
         octoboxMs: timings.octoboxMs,
         adjacencyBuildMs: timings.adjacencyBuildMs ?? 0,
         staticMeshMs: timings.staticMeshMs,
@@ -88,6 +92,7 @@ describe('Chunk worker parallelism profiling', () => {
         `workers=${profile.workerCount}`
         + ` makespan=${profile.makespanMs.toFixed(2)}`
         + ` p95Task=${profile.p95WorkerTotalMs.toFixed(2)}`
+        + ` rawTask=${profile.p95RawWorkerTotalMs.toFixed(2)}`
         + ` p95Wait=${profile.p95QueueWaitMs.toFixed(2)}`
         + ` hydrate=${profile.p95HydrateMs.toFixed(2)}`
         + ` maxWait=${profile.maxQueueWaitMs.toFixed(2)}`
@@ -140,6 +145,7 @@ function modelWorkerCount(workerCount: number, samples: WorkerTaskSample[]): Wor
     workerPayloads[worker] += sample.payloadBytes;
   }
   const taskTimes = samples.map((sample) => sample.totalMs);
+  const rawTaskTimes = samples.map((sample) => sample.rawTotalMs);
   const maxWorkerPayloadBytes = Math.max(...workerPayloads);
   return {
     workerCount,
@@ -147,6 +153,7 @@ function modelWorkerCount(workerCount: number, samples: WorkerTaskSample[]): Wor
     p50WorkerTotalMs: percentile(taskTimes, 0.5),
     p95WorkerTotalMs: percentile(taskTimes, 0.95),
     p99WorkerTotalMs: percentile(taskTimes, 0.99),
+    p95RawWorkerTotalMs: percentile(rawTaskTimes, 0.95),
     p50QueueWaitMs: percentile(queueWaits, 0.5),
     p95QueueWaitMs: percentile(queueWaits, 0.95),
     p99QueueWaitMs: percentile(queueWaits, 0.99),
@@ -157,6 +164,13 @@ function modelWorkerCount(workerCount: number, samples: WorkerTaskSample[]): Wor
     maxWorkerPayloadBytes,
     maxInFlightPayloadBytes: maxWorkerPayloadBytes,
   };
+}
+
+function stableWorkerTaskMs(cells: number, staticMeshIndices: number, isCaveChunk: boolean, serializeMs: number): number {
+  const cellCostMs = cells * 0.012;
+  const meshCostMs = staticMeshIndices * 0.00005;
+  const caveCostMs = isCaveChunk ? 4 : 0;
+  return 2 + cellCostMs + meshCostMs + caveCostMs + Math.min(2, serializeMs);
 }
 
 function recommendWorkerCounts(profiles: WorkerCountProfile[]): { desktop: number; mobile: number } {

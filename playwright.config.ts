@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const fileRenderMode = process.env.ABYSS_RENDER_MODE === 'file';
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -14,10 +16,10 @@ export default defineConfig({
     },
   ],
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: fileRenderMode ? undefined : 'http://127.0.0.1:4173',
     headless: true,
   },
-  webServer: {
+  webServer: fileRenderMode ? undefined : {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: true,

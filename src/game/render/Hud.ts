@@ -23,6 +23,7 @@ interface HudSnapshot {
   debugUiVisible: boolean;
   chunkDebugEnabled: boolean;
   fogEnabled: boolean;
+  boidsDebugVisible: boolean;
   spawnBudget: number;
   averageFps: number;
   timings: DebugTimingSnapshot;
@@ -71,6 +72,7 @@ export class Hud {
   private fpsMenuToggle!: HTMLInputElement;
   private chunkMenuToggle!: HTMLInputElement;
   private fogMenuToggle!: HTMLInputElement;
+  private boidsMenuToggle!: HTMLInputElement;
   private autopilotMenuToggle!: HTMLInputElement;
   private joystickMenuToggle!: HTMLInputElement;
   private readonly joystickEl = document.createElement('div');
@@ -85,6 +87,7 @@ export class Hud {
   private onToggleFps: ((enabled: boolean) => void) | null = null;
   private onToggleChunks: ((enabled: boolean) => void) | null = null;
   private onToggleFog: ((enabled: boolean) => void) | null = null;
+  private onToggleBoidsDebug: ((enabled: boolean) => void) | null = null;
   private onToggleAutopilot: ((enabled: boolean) => void) | null = null;
   private joystickTouchId: number | null = null;
   private joystickBaseRect: DOMRect | null = null;
@@ -208,6 +211,10 @@ export class Hud {
             <input type="checkbox" class="menu-toggle fog-toggle" />
           </label>
           <label class="menu-row">
+            <span>Boids/LOD</span>
+            <input type="checkbox" class="menu-toggle boids-toggle" />
+          </label>
+          <label class="menu-row">
             <span>Autopilot</span>
             <input type="checkbox" class="menu-toggle autopilot-toggle" />
           </label>
@@ -235,12 +242,14 @@ export class Hud {
     this.fpsMenuToggle = this.requirePauseToggle('.fps-toggle');
     this.chunkMenuToggle = this.requirePauseToggle('.chunk-toggle');
     this.fogMenuToggle = this.requirePauseToggle('.fog-toggle');
+    this.boidsMenuToggle = this.requirePauseToggle('.boids-toggle');
     this.autopilotMenuToggle = this.requirePauseToggle('.autopilot-toggle');
     this.joystickMenuToggle = this.requirePauseToggle('.joystick-toggle');
     this.debugMenuToggle.addEventListener('change', () => this.onToggleDebug?.(this.debugMenuToggle.checked));
     this.fpsMenuToggle.addEventListener('change', () => this.onToggleFps?.(this.fpsMenuToggle.checked));
     this.chunkMenuToggle.addEventListener('change', () => this.onToggleChunks?.(this.chunkMenuToggle.checked));
     this.fogMenuToggle.addEventListener('change', () => this.onToggleFog?.(this.fogMenuToggle.checked));
+    this.boidsMenuToggle.addEventListener('change', () => this.onToggleBoidsDebug?.(this.boidsMenuToggle.checked));
     this.autopilotMenuToggle.addEventListener('change', () => this.onToggleAutopilot?.(this.autopilotMenuToggle.checked));
     this.joystickMenuToggle.addEventListener('change', () => {
       this.setJoystickVisible(this.joystickMenuToggle.checked);
@@ -259,6 +268,7 @@ export class Hud {
     onToggleFps?: (enabled: boolean) => void;
     onToggleChunks?: (enabled: boolean) => void;
     onToggleFog?: (enabled: boolean) => void;
+    onToggleBoidsDebug?: (enabled: boolean) => void;
     onToggleAutopilot?: (enabled: boolean) => void;
   }): void {
     this.onRestart = callbacks.onRestart;
@@ -268,6 +278,7 @@ export class Hud {
     this.onToggleFps = callbacks.onToggleFps ?? null;
     this.onToggleChunks = callbacks.onToggleChunks ?? null;
     this.onToggleFog = callbacks.onToggleFog ?? null;
+    this.onToggleBoidsDebug = callbacks.onToggleBoidsDebug ?? null;
     this.onToggleAutopilot = callbacks.onToggleAutopilot ?? null;
   }
 
@@ -403,6 +414,7 @@ export class Hud {
     this.fpsMenuToggle.checked = s.debugEnabled && s.debugUiVisible;
     this.chunkMenuToggle.checked = s.chunkDebugEnabled;
     this.fogMenuToggle.checked = s.fogEnabled;
+    this.boidsMenuToggle.checked = s.boidsDebugVisible;
     this.autopilotMenuToggle.checked = s.autopilot;
     this.depthValue.textContent = `${Math.max(0, s.depth).toFixed(0)}m`;
     this.depthBandEl.textContent = s.depthBand;
@@ -454,7 +466,10 @@ export class Hud {
         `turn ${s.tuning.turnInputSpeed.toFixed(2)}  ` +
         `octo ${s.timings.workerOctoboxMs.toFixed(1)}  ` +
         `mesh ${s.timings.workerStaticMeshMs.toFixed(1)}`;
-      if (s.boidsDebug) {
+      const showBoidsDebug = s.boidsDebugVisible && s.boidsDebug !== undefined;
+      this.debugBoidLabel.style.display = showBoidsDebug ? 'block' : 'none';
+      this.debugBoids.style.display = showBoidsDebug ? 'block' : 'none';
+      if (showBoidsDebug && s.boidsDebug) {
         const bd = s.boidsDebug;
         this.debugBoids.textContent =
           `boids ${bd.boidCount}/${bd.activeBoidCount}  ` +
@@ -477,6 +492,9 @@ export class Hud {
           `sim ${bd.simulationMs.toFixed(1)}  ` +
           `render ${bd.renderMs.toFixed(1)}`;
       }
+    } else {
+      this.debugBoidLabel.style.display = 'none';
+      this.debugBoids.style.display = 'none';
     }
 
     const deathStats = this.deathOverlay.querySelector('.death-stats');

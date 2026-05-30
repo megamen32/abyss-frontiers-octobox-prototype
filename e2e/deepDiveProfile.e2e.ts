@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { appUrl } from './appUrl';
 
 interface MetricSummary {
   average: number;
@@ -25,7 +26,7 @@ test('profiles a 30 second downward flight', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
-  await page.goto('/?cpu=1');
+  await page.goto(appUrl('/?cpu=1'));
   await page.waitForFunction(() => typeof window.__ABYSS_PERF__?.report === 'function');
   await page.evaluate(() => window.__ABYSS_PERF__?.clear());
 

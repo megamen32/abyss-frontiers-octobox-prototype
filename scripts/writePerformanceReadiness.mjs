@@ -56,7 +56,7 @@ Generated from standalone profiles on ${generatedDate()}.
 - Desktop WebGPU policy allows the existing \`${boidsProfile.runtimePolicy.desktopWebGPU.initialBoids}\` initial / \`${boidsProfile.runtimePolicy.desktopWebGPU.maxBoids}\` max boid target.
 - WebGPU initialization returns \`null\` when \`navigator.gpu\` is unavailable, so unsupported WebKit/mobile environments stay on the CPU fallback path.
 - Keep the feature-gated WebGPU path for desktop-scale boids as the preferred path for headroom and power. CPU LOD now keeps the ${desktopBoids.count} profile under the 30fps fallback budget, so it can remain a viable fallback rather than the primary path.
-- A real WebKit GPU benchmark is still required before claiming WebGPU performance on this machine. The current sandbox blocks local server startup, so the WebKit render/profile pass could not run here.
+- A real WebKit GPU benchmark is still required before claiming WebGPU performance on this machine. The render scripts now use a prebuilt \`file://\` WebKit path to avoid local TCP listeners, but this sandbox's Playwright WebKit binary aborts during launch (\`Abort trap: 6\`) before any page code runs.
 
 ## Mobile Readiness
 
@@ -67,8 +67,8 @@ Generated from standalone profiles on ${generatedDate()}.
 
 ## Known Backlog
 
-- Re-run \`npm run test:render\` and render/deep-dive profiles in WebKit once local TCP listeners are available.
-- Bundle size warning remains: the main Vite bundle is about 683 kB minified; code splitting/lazy debug code should be handled separately.
+- Re-run \`npm run test:render\` and render/deep-dive profiles in WebKit once the local Playwright WebKit runtime can launch.
+- Bundle size warning remains: the main Vite bundle is about 690.1 kB minified; code splitting/lazy debug code should be handled separately.
 `;
 
 await writeFile(resolve(perfDir, 'mobile-gpu-readiness.md'), markdown, 'utf8');
