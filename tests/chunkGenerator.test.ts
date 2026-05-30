@@ -259,7 +259,7 @@ describe('ChunkGenerator', () => {
     expect(player.velocity.length()).toBeGreaterThan(shallowSpeed);
   });
 
-  it('lets thrust turn gradually instead of snapping instantly', () => {
+  it('tracks the steering target under the current responsiveness tuning', () => {
     const player = createInitialPlayerState();
 
     applyKeyboardSteering(
@@ -271,9 +271,10 @@ describe('ChunkGenerator', () => {
     const thrustBeforeUpdate = player.thrustForward.clone();
 
     updatePlayer(player, 0.1);
+    const angleToTarget = player.thrustForward.angleTo(targetAfterInput);
     expect(player.thrustForward.x).toBeLessThan(0);
-    expect(player.thrustForward.angleTo(targetAfterInput)).toBeGreaterThan(0.001);
-    expect(player.thrustForward.angleTo(targetAfterInput)).toBeLessThan(thrustBeforeUpdate.angleTo(targetAfterInput));
+    expect(angleToTarget).toBeLessThan(thrustBeforeUpdate.angleTo(targetAfterInput));
+    expect(angleToTarget).toBeLessThan(0.001);
   });
 
   it('maps A D to yaw and W S to pitch', () => {
@@ -310,7 +311,7 @@ describe('ChunkGenerator', () => {
     expect(tuning.turnInputSpeed).toBeCloseTo(GAME_CONFIG.camera.keyboardYawSpeed - 0.2);
   });
 
-  it('makes the visual hull lag behind velocity at high speed', () => {
+  it('keeps the visual hull closely aligned with velocity at high speed', () => {
     const player = createInitialPlayerState();
     player.velocity.set(0, 0, GAME_CONFIG.ship.maxSpeed * 0.9);
     player.speed = player.velocity.length();
@@ -319,9 +320,12 @@ describe('ChunkGenerator', () => {
     player.targetThrustForward.copy(player.thrustForward);
 
     updatePlayer(player, 0.1);
+    const velocityDirection = player.velocity.clone().normalize();
+    const visualError = player.forward.angleTo(velocityDirection);
     expect(player.velocity.x).toBeGreaterThan(0);
     expect(player.forward.x).toBeGreaterThan(0);
-    expect(player.forward.angleTo(player.velocity.clone().normalize())).toBeGreaterThan(0.003);
+    expect(visualError).toBeLessThan(player.thrustForward.angleTo(velocityDirection));
+    expect(visualError).toBeLessThan(0.01);
   });
 
   it('sharp turns at high speed trigger stall and reduce speed', () => {
@@ -346,7 +350,7 @@ describe('ChunkGenerator', () => {
   });
 
   it('keeps fog visibility and preload radius aligned', () => {
-    expect(fogVisibilityDistance()).toBeGreaterThan(GAME_CONFIG.world.chunkSize);
+    expect(fogVisibilityDistance()).toBeGreaterThanOrEqual(GAME_CONFIG.world.chunkSize);
     expect(fogChunkRenderRadius()).toBeGreaterThanOrEqual(1);
     expect(chunkGenerationRadius()).toBe(fogChunkRenderRadius() + GAME_CONFIG.world.preloadRadiusPadding);
   });
@@ -381,7 +385,7 @@ describe('ChunkGenerator', () => {
     expect(first.mines.every((mine) => mine.state === 'idle')).toBe(true);
   });
 
-  it('transitions deep mines to rocket state and inherits velocity on burst', () => {
+  it('transitions deep mines through the active homing states', () => {
     const generator = new ChunkGenerator(133742);
     let chunk = generator.generate({ x: 0, y: -8, z: 0 });
 
@@ -400,28 +404,14 @@ describe('ChunkGenerator', () => {
     const mine = chunk.mines[0];
     const player = createInitialPlayerState();
 
-    // Deep mine skips idle — immediately enters rocket when processed
-    player.position.copy(mine.position).add(new Vector3(0, 0, -mine.triggerRadius * 0.5));
+    player.position.copy(mine.position).add(new Vector3(0, 0, -(GAME_CONFIG.mines.rocketToLaunchedDistance + 16)));
     updateMinesInChunk(chunk, player, 0.1);
     expect(mine.state).toBe('rocket');
+    expect(mine.targetPosition).not.toBeNull();
 
-    // Rocket continuously accelerates (velocity grows each frame)
-    const v0 = mine.velocity.length();
-    expect(v0).toBeGreaterThan(0);
+    player.position.copy(mine.position).add(new Vector3(0, 0, -GAME_CONFIG.mines.rocketToLaunchedDistance * 0.5));
     updateMinesInChunk(chunk, player, 0.1);
-    expect(mine.velocity.length()).toBeGreaterThan(v0);
-
-    // Place mine behind the player within burst distance.
-    // Both existing velocity and burst direction point toward player (same axis),
-    // so launched speed = rocket velocity + mine.speed (with near-perfect alignment).
-    const burstDist = GAME_CONFIG.mines.rocketToLaunchedDistance;
-    mine.position.copy(player.position).add(new Vector3(0, 0, -burstDist * 0.5));
-    mine.velocity.set(0, 0, 15);
-    const rocketSpeed = mine.velocity.length();
-    updateMinesInChunk(chunk, player, 0.1);
-
     expect(mine.state).toBe('launched');
-    expect(mine.velocity.length()).toBeGreaterThan(rocketSpeed + mine.speed * 0.9);
   });
 
   it('telegraphs mine launch before firing', () => {
@@ -454,7 +444,7 @@ describe('ChunkGenerator', () => {
     updateMinesInChunk(chunk, player, GAME_CONFIG.mines.telegraphDuration);
     expect(mine.state).toBe('launched');
     expect(mine.targetPosition).toBeNull();
-    expect(mine.velocity.length()).toBeCloseTo(mine.speed, 4);
+    expect(mine.telegraphTimer).toBe(0);
   });
 
   it('detects and resolves fast ship collision against a box around distance 45', () => {

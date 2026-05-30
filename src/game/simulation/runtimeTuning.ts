@@ -21,7 +21,7 @@ export function getRuntimeFlightTuning(): RuntimeFlightTuning {
 export function applyRuntimeTuning(input: InputState): RuntimeFlightTuning {
   runtimeTuning.baseAcceleration = MathUtils.clamp(
     runtimeTuning.baseAcceleration + input.accelerationAdjust * 0.5,
-    4,
+    0.1,
     40,
   );
   runtimeTuning.baseDrag = MathUtils.clamp(

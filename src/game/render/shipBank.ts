@@ -1,7 +1,7 @@
 import { MathUtils, Quaternion, Vector3 } from 'three';
 
 export const SHIP_BANK_MAX_DEG = 90;
-const SHIP_BANK_MIN_SPEED = 0;
+const SHIP_BANK_MIN_SPEED = 1;
 const SHIP_BANK_DRIFT_EXP = 1.35;
 const SHIP_BANK_TURN_KICK_GAIN = 0.45;
 const SHIP_BANK_TURN_KICK_MAX = 0.16;
