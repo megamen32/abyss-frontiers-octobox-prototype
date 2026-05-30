@@ -6,7 +6,7 @@ import { SeededRandom } from '../utils/rng';
 import { GAME_CONFIG } from '../config';
 import { generateOctoBoxLeaves } from './octobox';
 import { generatePortals } from './portals';
-import { buildAdjacency, buildNavigableSet, ensurePortalConnectivity } from './navigation';
+import { buildAdjacency, buildNavigableSet, ensurePortalConnectivity, type AdjacencyProfile } from './navigation';
 import { placeObstacles } from './obstacles';
 import { placeLoot } from './loot';
 import { placeMines } from './mines';
@@ -92,11 +92,12 @@ export class ChunkGenerator {
       nodesVisited: 0,
       leavesGenerated: 0,
       maxDepthReached: 0,
+      solidWallEarlyStops: 0,
     };
     const octoboxStart = performance.now();
     const cells = generateOctoBoxLeaves(bounds, seed, octoboxProfile);
     const octoboxMs = performance.now() - octoboxStart;
-    const adjacencyProfile = { pairsTested: 0 };
+    const adjacencyProfile: AdjacencyProfile = { pairsTested: 0 };
     const adjacencyStart = performance.now();
     const adjacencyAll = buildAdjacency(cells, adjacencyProfile);
     const adjacencyBuildMs = performance.now() - adjacencyStart;
@@ -171,9 +172,16 @@ export class ChunkGenerator {
           octoboxNodesVisited: octoboxProfile.nodesVisited,
           octoboxLeavesGenerated: octoboxProfile.leavesGenerated,
           octoboxMaxDepthReached: octoboxProfile.maxDepthReached,
+          octoboxSolidWallEarlyStops: octoboxProfile.solidWallEarlyStops,
           navigationMs,
           adjacencyBuildMs,
           adjacencyPairsTested: adjacencyProfile.pairsTested,
+          adjacencyExactChecks: adjacencyProfile.exactChecks,
+          adjacencyDuplicatePairsSkipped: adjacencyProfile.duplicatePairsSkipped,
+          adjacencyPlanesVisited: adjacencyProfile.planesVisited,
+          adjacencyBucketLookups: adjacencyProfile.bucketLookups,
+          adjacencyMaxPlanePairs: adjacencyProfile.maxPlanePairs,
+          adjacencyMaxBucketLoad: adjacencyProfile.maxBucketLoad,
           navigableSetMs,
           portalConnectivityMs,
           adjacencyEdges: adjacencyAll.length,

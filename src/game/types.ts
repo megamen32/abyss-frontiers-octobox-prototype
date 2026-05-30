@@ -171,9 +171,16 @@ export interface ChunkBuildTimings {
   octoboxNodesVisited?: number;
   octoboxLeavesGenerated?: number;
   octoboxMaxDepthReached?: number;
+  octoboxSolidWallEarlyStops?: number;
   navigationMs: number;
   adjacencyBuildMs?: number;
   adjacencyPairsTested?: number;
+  adjacencyExactChecks?: number;
+  adjacencyDuplicatePairsSkipped?: number;
+  adjacencyPlanesVisited?: number;
+  adjacencyBucketLookups?: number;
+  adjacencyMaxPlanePairs?: number;
+  adjacencyMaxBucketLoad?: number;
   navigableSetMs?: number;
   portalConnectivityMs?: number;
   adjacencyEdges?: number;

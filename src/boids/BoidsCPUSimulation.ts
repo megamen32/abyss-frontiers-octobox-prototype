@@ -4,12 +4,14 @@ import { BoidBehavior, BoidFlags } from './BoidsTypes'
 import { BoidsSpatialGrid } from './BoidsSpatialGrid'
 import { BoidsOctoBoxAdapter } from './BoidsOctoBoxAdapter'
 import { GAME_CONFIG } from '../game/config'
-import { shortestWrappedDelta, shortestWrappedDistance, wrapPositionInPlace } from '../game/utils/worldTopology'
+import { WORLD_SIZE, wrapPositionInPlace } from '../game/utils/worldTopology'
 
 const _v = new Vector3()
 const _sep = new Vector3()
 const _ali = new Vector3()
 const _coh = new Vector3()
+const _pursuit = new Vector3()
+const _flee = new Vector3()
 const _wall = new Vector3()
 const _flow = new Vector3()
 const _avoid = new Vector3()
@@ -20,16 +22,7 @@ const _wander = new Vector3()
 
 const MINE_TARGETING_MAX_SPEED = 9
 const MINE_TARGETING_ACCEL = 18
-
-function typeOf(config: BoidsConfig, typeId: number): BoidTypeConfig {
-  return config.boidTypes[typeId] ?? config.boidTypes[0]
-}
-
-function interactionOf(config: BoidsConfig, fromTypeId: number, toTypeId: number): BoidTypeInteraction {
-  return config.interactions[fromTypeId]?.[toTypeId]
-    ?? config.interactions[fromTypeId]?.[fromTypeId]
-    ?? { separation: 1, alignment: 1, cohesion: 1, pursuit: 0, flee: 0, ignore: false }
-}
+const DEFAULT_INTERACTION: BoidTypeInteraction = { separation: 1, alignment: 1, cohesion: 1, pursuit: 0, flee: 0, ignore: false }
 
 export class BoidsCPUSimulation {
   private boids: BoidState[]
@@ -37,11 +30,21 @@ export class BoidsCPUSimulation {
   private config: BoidsConfig
   private adapter: BoidsOctoBoxAdapter
   private maxBoids: number
+  private readonly typeById: BoidTypeConfig[] = []
+  private readonly interactionByTypeId: BoidTypeInteraction[][] = []
   private readonly externalSlots = new Map<string, number>()
   private readonly dirtyExternalSlots = new Set<number>()
+  private readonly connectedCellIds = new Set<number>()
   activeCount = 0
   private spawnCount = 0
   private despawnCount = 0
+  private neighborSearchMs = 0
+  private steeringMs = 0
+  private avoidanceMs = 0
+  private integrationMs = 0
+  private mineUpdateMs = 0
+  private neighborSamples = 0
+  private neighborTotal = 0
 
   private lastPlayerPos = new Vector3()
   private lastPlayerVel = new Vector3()
@@ -51,6 +54,19 @@ export class BoidsCPUSimulation {
     this.config = config
     this.adapter = adapter
     this.maxBoids = Math.min(config.maxBoids, config.fallback.cpuMaxBoids)
+    for (let i = 0; i < config.boidTypes.length; i++) {
+      const type = config.boidTypes[i]
+      this.typeById[type.typeId] = type
+      const row = config.interactions[i] ?? []
+      this.interactionByTypeId[type.typeId] = this.interactionByTypeId[type.typeId] ?? []
+      for (let j = 0; j < config.boidTypes.length; j++) {
+        const targetType = config.boidTypes[j]
+        const interaction = row[j]
+        if (interaction) {
+          this.interactionByTypeId[type.typeId][targetType.typeId] = interaction
+        }
+      }
+    }
     this.boids = new Array(this.maxBoids)
     for (let i = 0; i < this.maxBoids; i++) {
       this.boids[i] = {
@@ -82,6 +98,13 @@ export class BoidsCPUSimulation {
     predictor?: BoidsFollowPredictor,
   ): void {
     const cfg = this.config
+    this.neighborSearchMs = 0
+    this.steeringMs = 0
+    this.avoidanceMs = 0
+    this.integrationMs = 0
+    this.mineUpdateMs = 0
+    this.neighborSamples = 0
+    this.neighborTotal = 0
     this.lastPlayerPos.copy(playerPosition)
     if (playerVelocity) this.lastPlayerVel.copy(playerVelocity)
     if (playerForward) this.lastPlayerFwd.copy(playerForward)
@@ -101,7 +124,10 @@ export class BoidsCPUSimulation {
       b.age += dt
       _v.set(b.position[0], b.position[1], b.position[2])
 
-      if (b.flags === BoidFlags.ACTIVE && shortestWrappedDistance(_v, cameraPosition) > cfg.despawnRadius) {
+      if (b.flags === BoidFlags.ACTIVE && wrappedDistance3(
+        b.position[0], b.position[1], b.position[2],
+        cameraPosition.x, cameraPosition.y, cameraPosition.z,
+      ) > cfg.despawnRadius) {
         b.flags = BoidFlags.DESPAWNING
         this.despawnCount++
       }
@@ -129,33 +155,37 @@ export class BoidsCPUSimulation {
       if (b.flags === BoidFlags.DEAD || b.flags === BoidFlags.SLEEPING || b.flags === BoidFlags.KINEMATIC) continue
 
       _v.set(b.position[0], b.position[1], b.position[2])
-      if (shortestWrappedDistance(_v, playerPosition) > cfg.simulationRadius) continue
+      if (wrappedDistance3(
+        b.position[0], b.position[1], b.position[2],
+        playerPosition.x, playerPosition.y, playerPosition.z,
+      ) > cfg.simulationRadius) continue
 
-      const tc = typeOf(cfg, b.typeId)
+      const tc = this.typeOf(b.typeId)
+      const neighborStart = performance.now()
       const cellId = this.adapter.findCellByPosition(_v)
       b.cellId = cellId
 
-      const connectedIds = buildConnectedSet(this.adapter, cellId)
+      const connectedIds = this.buildConnectedSet(cellId)
       const neighbors = this.grid.queryNeighbors(b.position, tc.perceptionRadius, this.boids, i, 50, connectedIds)
+      this.neighborSearchMs += performance.now() - neighborStart
+      this.neighborSamples += 1
+      this.neighborTotal += neighbors.length
 
+      const steeringStart = performance.now()
       _sep.set(0, 0, 0)
       _ali.set(0, 0, 0)
       _coh.set(0, 0, 0)
-      const pursuit = new Vector3()
-      const flee = new Vector3()
+      _pursuit.set(0, 0, 0)
+      _flee.set(0, 0, 0)
       let count = 0
 
       for (let n = 0; n < neighbors.length; n++) {
         const other = this.boids[neighbors[n]]
-        const rel = interactionOf(cfg, b.typeId, other.typeId)
+        const rel = this.interactionOf(b.typeId, other.typeId)
         if (rel.ignore) continue
-        const deltaToOther = shortestWrappedDelta(
-          new Vector3(other.position[0], other.position[1], other.position[2]),
-          new Vector3(b.position[0], b.position[1], b.position[2]),
-        )
-        const dx = deltaToOther.x
-        const dy = deltaToOther.y
-        const dz = deltaToOther.z
+        const dx = shortestAxisDelta(other.position[0], b.position[0])
+        const dy = shortestAxisDelta(other.position[1], b.position[1])
+        const dz = shortestAxisDelta(other.position[2], b.position[2])
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
         if (dist < tc.separationRadius && dist > 0.001) {
           _sep.x += (dx / dist / dist) * rel.separation
@@ -173,14 +203,14 @@ export class BoidsCPUSimulation {
           _coh.z += (b.position[2] - dz) * rel.cohesion
         }
         if (rel.pursuit > 0) {
-          pursuit.x += -dx * rel.pursuit
-          pursuit.y += -dy * rel.pursuit
-          pursuit.z += -dz * rel.pursuit
+          _pursuit.x += -dx * rel.pursuit
+          _pursuit.y += -dy * rel.pursuit
+          _pursuit.z += -dz * rel.pursuit
         }
         if (rel.flee > 0) {
-          flee.x += dx * rel.flee
-          flee.y += dy * rel.flee
-          flee.z += dz * rel.flee
+          _flee.x += dx * rel.flee
+          _flee.y += dy * rel.flee
+          _flee.z += dz * rel.flee
         }
         count += 1
       }
@@ -193,10 +223,11 @@ export class BoidsCPUSimulation {
         _coh.z = _coh.z / count - b.position[2]
         const cl = _coh.length(); if (cl > 0.001) _coh.divideScalar(cl)
       }
-      if (pursuit.lengthSq() > 0.0001) pursuit.normalize()
-      if (flee.lengthSq() > 0.0001) flee.normalize()
+      if (_pursuit.lengthSq() > 0.0001) _pursuit.normalize()
+      if (_flee.lengthSq() > 0.0001) _flee.normalize()
+      this.steeringMs += performance.now() - steeringStart
 
-      // Wall avoidance from OctoBox bounds
+      const avoidanceStart = performance.now()
       _wall.set(0, 0, 0)
       if (cellId >= 0) {
         const bounds = this.adapter.getCellBounds(cellId)
@@ -220,25 +251,22 @@ export class BoidsCPUSimulation {
         }
       }
 
-      // OctoBox flow
       _flow.set(0, 0, 0)
       if (cellId >= 0) _flow.copy(this.adapter.getCellFlow(cellId))
 
-      // Player avoidance
       _avoid.set(0, 0, 0)
       if (tc.avoidPlayerRadius > 0) {
-        const playerDelta = shortestWrappedDelta(playerPosition, new Vector3(b.position[0], b.position[1], b.position[2]))
-        const pdx = playerDelta.x
-        const pdy = playerDelta.y
-        const pdz = playerDelta.z
+        const pdx = shortestAxisDelta(playerPosition.x, b.position[0])
+        const pdy = shortestAxisDelta(playerPosition.y, b.position[1])
+        const pdz = shortestAxisDelta(playerPosition.z, b.position[2])
         const pd = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
         if (pd < tc.avoidPlayerRadius && pd > 0.001) {
           const s = (1 - pd / tc.avoidPlayerRadius) / pd
           _avoid.set(pdx * s, pdy * s, pdz * s)
         }
       }
+      this.avoidanceMs += performance.now() - avoidanceStart
 
-      // Per-boid oscillating follow attractor ahead of the ship
       _follow.set(0, 0, 0)
       if (tc.followTarget !== null && predictor) {
         const ft = tc.followTarget
@@ -254,22 +282,16 @@ export class BoidsCPUSimulation {
         const targetZ = predicted.z
           + Math.sin(lateralAngle) * ft.spread
 
-        const followDelta = shortestWrappedDelta(
-          new Vector3(b.position[0], b.position[1], b.position[2]),
-          new Vector3(targetX, targetY, targetZ),
-        )
-        const fdx = followDelta.x
-        const fdy = followDelta.y
-        const fdz = followDelta.z
+        const fdx = shortestAxisDelta(b.position[0], targetX)
+        const fdy = shortestAxisDelta(b.position[1], targetY)
+        const fdz = shortestAxisDelta(b.position[2], targetZ)
         const fd = Math.sqrt(fdx * fdx + fdy * fdy + fdz * fdz)
         if (fd > 0.001) {
-          // pull proportional to distance; no hard cap so boids chase eagerly
           const pull = Math.min(fd / 8, 2.0)
           _follow.set(fdx / fd * pull, fdy / fd * pull, fdz / fd * pull)
         }
       }
 
-      // Accumulate forces
       _force.set(0, 0, 0)
       _force.addScaledVector(_sep, tc.separationWeight)
       _force.addScaledVector(_ali, tc.alignmentWeight)
@@ -277,19 +299,21 @@ export class BoidsCPUSimulation {
       _force.addScaledVector(_wall, tc.wallAvoidanceWeight)
       _force.addScaledVector(_flow, tc.flowWeight)
       _force.addScaledVector(_avoid, tc.playerAvoidanceWeight)
-      _force.addScaledVector(pursuit, 1.0)
-      _force.addScaledVector(flee, 1.0)
+      _force.addScaledVector(_pursuit, 1.0)
+      _force.addScaledVector(_flee, 1.0)
       if (tc.followTarget !== null) {
         _force.addScaledVector(_follow, tc.followTarget.weight)
       }
       if (tc.name === 'mine') {
+        const mineStart = performance.now()
         this.applyMineBehavior(b, _force)
+        this.mineUpdateMs += performance.now() - mineStart
       }
 
       const fl = _force.length()
       if (fl > tc.maxForce) _force.multiplyScalar(tc.maxForce / fl)
 
-      // Integrate velocity with turn-rate clamp
+      const integrationStart = performance.now()
       const vx = b.velocity[0] + _force.x * dt
       const vy = b.velocity[1] + _force.y * dt
       const vz = b.velocity[2] + _force.z * dt
@@ -312,7 +336,6 @@ export class BoidsCPUSimulation {
         b.velocity[0] = vx; b.velocity[1] = vy; b.velocity[2] = vz
       }
 
-      // Speed clamp
       let spd = Math.sqrt(b.velocity[0] ** 2 + b.velocity[1] ** 2 + b.velocity[2] ** 2)
       if (spd > tc.maxSpeed) {
         const s = tc.maxSpeed / spd
@@ -329,7 +352,6 @@ export class BoidsCPUSimulation {
       wrapPositionInPlace(_v)
       b.position[0] = _v.x; b.position[1] = _v.y; b.position[2] = _v.z
 
-      // Hard clamp to OctoBox cell only for non-following boids to prevent tunnelling
       if (tc.followTarget === null && cellId >= 0) {
         const bounds = this.adapter.getCellBounds(cellId)
         if (bounds) {
@@ -338,6 +360,7 @@ export class BoidsCPUSimulation {
           b.position[2] = Math.max(bounds.min.z + 1, Math.min(bounds.max.z - 1, b.position[2]))
         }
       }
+      this.integrationMs += performance.now() - integrationStart
     }
   }
 
@@ -384,7 +407,10 @@ export class BoidsCPUSimulation {
         cell.boundsMin.y + Math.random() * (cell.boundsMax.y - cell.boundsMin.y),
         cell.boundsMin.z + Math.random() * (cell.boundsMax.z - cell.boundsMin.z),
       )
-      if (tc.avoidPlayerRadius > 0 && shortestWrappedDistance(_v, playerPosition) < tc.avoidPlayerRadius) continue
+      if (tc.avoidPlayerRadius > 0 && wrappedDistance3(
+        _v.x, _v.y, _v.z,
+        playerPosition.x, playerPosition.y, playerPosition.z,
+      ) < tc.avoidPlayerRadius) continue
 
       const slot = this.findDeadSlot()
       if (slot < 0) break
@@ -436,7 +462,18 @@ export class BoidsCPUSimulation {
     return -1
   }
 
-  getStats() { return { spawnCount: this.spawnCount, despawnCount: this.despawnCount } }
+  getStats() {
+    return {
+      spawnCount: this.spawnCount,
+      despawnCount: this.despawnCount,
+      neighborSearchMs: this.neighborSearchMs,
+      steeringMs: this.steeringMs,
+      avoidanceMs: this.avoidanceMs,
+      integrationMs: this.integrationMs,
+      mineUpdateMs: this.mineUpdateMs,
+      avgNeighbors: this.neighborSamples > 0 ? this.neighborTotal / this.neighborSamples : 0,
+    }
+  }
   resetStats(): void { this.spawnCount = 0; this.despawnCount = 0 }
   dispose(): void { this.boids.length = 0 }
 
@@ -594,13 +631,42 @@ export class BoidsCPUSimulation {
     this.dirtyExternalSlots.clear()
     return dirty
   }
+
+  private typeOf(typeId: number): BoidTypeConfig {
+    return this.typeById[typeId] ?? this.config.boidTypes[0]
+  }
+
+  private interactionOf(fromTypeId: number, toTypeId: number): BoidTypeInteraction {
+    return this.interactionByTypeId[fromTypeId]?.[toTypeId]
+      ?? this.interactionByTypeId[fromTypeId]?.[fromTypeId]
+      ?? DEFAULT_INTERACTION
+  }
+
+  private buildConnectedSet(cellId: number): Set<number> | null {
+    if (cellId < 0) return null
+    this.connectedCellIds.clear()
+    this.connectedCellIds.add(cellId)
+    const neighbors = this.adapter.getConnectedNeighborCellIds(cellId)
+    for (let i = 0; i < neighbors.length; i++) {
+      this.connectedCellIds.add(neighbors[i])
+    }
+    return this.connectedCellIds
+  }
 }
 
-function buildConnectedSet(adapter: BoidsOctoBoxAdapter, cellId: number): Set<number> | null {
-  if (cellId < 0) return null
-  const s = new Set<number>()
-  s.add(cellId)
-  const n = adapter.getConnectedNeighborCellIds(cellId)
-  for (let i = 0; i < n.length; i++) s.add(n[i])
-  return s
+function wrappedDistance3(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number {
+  const dx = shortestAxisDelta(ax, bx)
+  const dy = shortestAxisDelta(ay, by)
+  const dz = shortestAxisDelta(az, bz)
+  return Math.sqrt(dx * dx + dy * dy + dz * dz)
+}
+
+function shortestAxisDelta(from: number, to: number): number {
+  let delta = to - from
+  if (delta > WORLD_SIZE * 0.5) {
+    delta -= WORLD_SIZE
+  } else if (delta < -WORLD_SIZE * 0.5) {
+    delta += WORLD_SIZE
+  }
+  return delta
 }

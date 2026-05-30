@@ -33,8 +33,15 @@ interface ChunkSlowBreakdown {
   octoboxFieldSampleMs: number;
   octoboxNodesVisited: number;
   octoboxLeavesGenerated: number;
+  octoboxSolidWallEarlyStops: number;
   skeletonCandidatesTested: number;
   adjacencyBuildMs: number;
+  adjacencyExactChecks: number;
+  adjacencyDuplicatePairsSkipped: number;
+  adjacencyPlanesVisited: number;
+  adjacencyBucketLookups: number;
+  adjacencyMaxPlanePairs: number;
+  adjacencyMaxBucketLoad: number;
   cells: number;
   staticMeshMs: number;
   serializeMs: number;
@@ -132,12 +139,19 @@ describe('Chunk profiling', () => {
         + ` split avg=${entry.averages.octoboxSplitPointsMs.toFixed(2)}`
         + ` adjacency avg=${entry.averages.adjacencyBuildMs.toFixed(2)}`
         + ` pairs avg=${entry.averages.adjacencyPairsTested.toFixed(0)}`
+        + ` exact avg=${entry.averages.adjacencyExactChecks.toFixed(0)}`
+        + ` dup avg=${entry.averages.adjacencyDuplicatePairsSkipped.toFixed(0)}`
+        + ` planes avg=${entry.averages.adjacencyPlanesVisited.toFixed(0)}`
+        + ` bucketLookups avg=${entry.averages.adjacencyBucketLookups.toFixed(0)}`
+        + ` maxPlanePairs max=${entry.maximums.adjacencyMaxPlanePairs.toFixed(0)}`
+        + ` maxBucketLoad max=${entry.maximums.adjacencyMaxBucketLoad.toFixed(0)}`
         + ` navSet avg=${entry.averages.navigableSetMs.toFixed(2)}`
         + ` portals avg=${entry.averages.portalConnectivityMs.toFixed(2)}`
         + ` staticMesh avg=${entry.averages.staticMeshMs.toFixed(2)}`
         + ` serialize avg=${entry.averages.serializeMs.toFixed(2)}`
         + ` cells avg=${entry.averages.cells.toFixed(1)}`
         + ` leaves avg=${entry.averages.octoboxLeavesGenerated.toFixed(1)}`
+        + ` solidStops avg=${entry.averages.octoboxSolidWallEarlyStops.toFixed(1)}`
         + ` nodes avg=${entry.averages.octoboxNodesVisited.toFixed(1)}`
         + ` adjEdges avg=${entry.averages.adjacencyEdges.toFixed(1)}`
         + ` indices max=${entry.maximums.staticMeshIndices.toFixed(0)}`
@@ -150,8 +164,15 @@ describe('Chunk profiling', () => {
         + ` fieldMs=${entry.maxBreakdown.octoboxFieldSampleMs.toFixed(2)}`
         + ` nodes=${entry.maxBreakdown.octoboxNodesVisited.toFixed(0)}`
         + ` leaves=${entry.maxBreakdown.octoboxLeavesGenerated.toFixed(0)}`
+        + ` solidStops=${entry.maxBreakdown.octoboxSolidWallEarlyStops.toFixed(0)}`
         + ` skelCandidates=${entry.maxBreakdown.skeletonCandidatesTested.toFixed(0)}`
         + ` adjacencyMs=${entry.maxBreakdown.adjacencyBuildMs.toFixed(2)}`
+        + ` exact=${entry.maxBreakdown.adjacencyExactChecks.toFixed(0)}`
+        + ` dup=${entry.maxBreakdown.adjacencyDuplicatePairsSkipped.toFixed(0)}`
+        + ` planes=${entry.maxBreakdown.adjacencyPlanesVisited.toFixed(0)}`
+        + ` bucketLookups=${entry.maxBreakdown.adjacencyBucketLookups.toFixed(0)}`
+        + ` maxPlanePairs=${entry.maxBreakdown.adjacencyMaxPlanePairs.toFixed(0)}`
+        + ` maxBucketLoad=${entry.maxBreakdown.adjacencyMaxBucketLoad.toFixed(0)}`
         + ` cells=${entry.maxBreakdown.cells.toFixed(0)}`
         + ` staticMeshMs=${entry.maxBreakdown.staticMeshMs.toFixed(2)}`
         + ` serializeMs=${entry.maxBreakdown.serializeMs.toFixed(2)}`,
@@ -165,8 +186,15 @@ describe('Chunk profiling', () => {
         + ` fieldMs=${entry.octoboxFieldSampleMs.toFixed(2)}`
         + ` nodes=${entry.octoboxNodesVisited.toFixed(0)}`
         + ` leaves=${entry.octoboxLeavesGenerated.toFixed(0)}`
+        + ` solidStops=${entry.octoboxSolidWallEarlyStops.toFixed(0)}`
         + ` skelCandidates=${entry.skeletonCandidatesTested.toFixed(0)}`
         + ` adjacencyMs=${entry.adjacencyBuildMs.toFixed(2)}`
+        + ` exact=${entry.adjacencyExactChecks.toFixed(0)}`
+        + ` dup=${entry.adjacencyDuplicatePairsSkipped.toFixed(0)}`
+        + ` planes=${entry.adjacencyPlanesVisited.toFixed(0)}`
+        + ` bucketLookups=${entry.adjacencyBucketLookups.toFixed(0)}`
+        + ` maxPlanePairs=${entry.adjacencyMaxPlanePairs.toFixed(0)}`
+        + ` maxBucketLoad=${entry.adjacencyMaxBucketLoad.toFixed(0)}`
         + ` cells=${entry.cells.toFixed(0)}`
         + ` staticMeshMs=${entry.staticMeshMs.toFixed(2)}`
         + ` serializeMs=${entry.serializeMs.toFixed(2)}`,
@@ -210,9 +238,16 @@ function summarize(samples: ChunkProfileSample[]): ChunkProfileSummary[] {
     'octoboxNodesVisited',
     'octoboxLeavesGenerated',
     'octoboxMaxDepthReached',
+    'octoboxSolidWallEarlyStops',
     'navigationMs',
     'adjacencyBuildMs',
     'adjacencyPairsTested',
+    'adjacencyExactChecks',
+    'adjacencyDuplicatePairsSkipped',
+    'adjacencyPlanesVisited',
+    'adjacencyBucketLookups',
+    'adjacencyMaxPlanePairs',
+    'adjacencyMaxBucketLoad',
     'navigableSetMs',
     'portalConnectivityMs',
     'adjacencyEdges',
@@ -269,8 +304,15 @@ function toSlowBreakdown(sample: ChunkProfileSample): ChunkSlowBreakdown {
     octoboxFieldSampleMs: sample.timings.octoboxFieldSampleMs ?? 0,
     octoboxNodesVisited: sample.timings.octoboxNodesVisited ?? 0,
     octoboxLeavesGenerated: sample.timings.octoboxLeavesGenerated ?? 0,
+    octoboxSolidWallEarlyStops: sample.timings.octoboxSolidWallEarlyStops ?? 0,
     skeletonCandidatesTested: sample.timings.octoboxSkeletonCandidatesTested ?? 0,
     adjacencyBuildMs: sample.timings.adjacencyBuildMs ?? 0,
+    adjacencyExactChecks: sample.timings.adjacencyExactChecks ?? sample.timings.adjacencyPairsTested ?? 0,
+    adjacencyDuplicatePairsSkipped: sample.timings.adjacencyDuplicatePairsSkipped ?? 0,
+    adjacencyPlanesVisited: sample.timings.adjacencyPlanesVisited ?? 0,
+    adjacencyBucketLookups: sample.timings.adjacencyBucketLookups ?? 0,
+    adjacencyMaxPlanePairs: sample.timings.adjacencyMaxPlanePairs ?? 0,
+    adjacencyMaxBucketLoad: sample.timings.adjacencyMaxBucketLoad ?? 0,
     cells: sample.cells,
     staticMeshMs: sample.timings.staticMeshMs ?? 0,
     serializeMs: sample.timings.serializeMs ?? 0,
@@ -291,9 +333,16 @@ function readMetric(
     | 'octoboxNodesVisited'
     | 'octoboxLeavesGenerated'
     | 'octoboxMaxDepthReached'
+    | 'octoboxSolidWallEarlyStops'
     | 'navigationMs'
     | 'adjacencyBuildMs'
     | 'adjacencyPairsTested'
+    | 'adjacencyExactChecks'
+    | 'adjacencyDuplicatePairsSkipped'
+    | 'adjacencyPlanesVisited'
+    | 'adjacencyBucketLookups'
+    | 'adjacencyMaxPlanePairs'
+    | 'adjacencyMaxBucketLoad'
     | 'navigableSetMs'
     | 'portalConnectivityMs'
     | 'adjacencyEdges'

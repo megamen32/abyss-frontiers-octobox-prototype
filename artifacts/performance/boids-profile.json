@@ -1,0 +1,277 @@
+{
+  "generatedAt": "2026-05-30T14:18:15.511Z",
+  "summaries": [
+    {
+      "label": "mobile_1k",
+      "count": 1000,
+      "p50TotalMs": 4.224666999999954,
+      "p95TotalMs": 17.896458000000052,
+      "p99TotalMs": 17.896458000000052,
+      "p95NeighborSearchMs": 13.068313999999532,
+      "p95SteeringMs": 1.3556689999992386,
+      "p95AvoidanceMs": 0.6914719999983845,
+      "p95IntegrationMs": 1.2153049999985797,
+      "p95MineUpdateMs": 0.017913000000248758,
+      "avgNeighbors": 0.6128333333333333
+    },
+    {
+      "label": "desktop_6k",
+      "count": 6000,
+      "p50TotalMs": 51.36645900000008,
+      "p95TotalMs": 75.7255419999999,
+      "p99TotalMs": 75.7255419999999,
+      "p95NeighborSearchMs": 62.326935999997886,
+      "p95SteeringMs": 4.395826000003126,
+      "p95AvoidanceMs": 1.0065959999974439,
+      "p95IntegrationMs": 1.2395000000055916,
+      "p95MineUpdateMs": 0.06775599999923543,
+      "avgNeighbors": 3.5864861111111117
+    }
+  ],
+  "frames": {
+    "mobile_1k": [
+      {
+        "frame": 0,
+        "totalMs": 6.133207999999968,
+        "neighborSearchMs": 2.722208999998884,
+        "steeringMs": 0.530439999997725,
+        "avoidanceMs": 0.48783000000162247,
+        "integrationMs": 1.2153049999985797,
+        "mineUpdateMs": 0.015253999999913503,
+        "avgNeighbors": 0.616
+      },
+      {
+        "frame": 1,
+        "totalMs": 4.666832999999997,
+        "neighborSearchMs": 2.5446879999968814,
+        "steeringMs": 0.3297499999989668,
+        "avoidanceMs": 0.2820410000016409,
+        "integrationMs": 0.4638620000002902,
+        "mineUpdateMs": 0.013788000000090506,
+        "avgNeighbors": 0.617
+      },
+      {
+        "frame": 2,
+        "totalMs": 17.896458000000052,
+        "neighborSearchMs": 13.068313999999532,
+        "steeringMs": 1.3556689999992386,
+        "avoidanceMs": 0.1865879999995741,
+        "integrationMs": 0.2299880000016401,
+        "mineUpdateMs": 0.015581999999881191,
+        "avgNeighbors": 0.613
+      },
+      {
+        "frame": 3,
+        "totalMs": 7.732916999999929,
+        "neighborSearchMs": 4.112905000001433,
+        "steeringMs": 0.25074800000095365,
+        "avoidanceMs": 0.6914719999983845,
+        "integrationMs": 1.1892990000025065,
+        "mineUpdateMs": 0.016124999999306056,
+        "avgNeighbors": 0.608
+      },
+      {
+        "frame": 4,
+        "totalMs": 3.502749999999992,
+        "neighborSearchMs": 2.3529849999971475,
+        "steeringMs": 0.17993800000147075,
+        "avoidanceMs": 0.14290299999993294,
+        "integrationMs": 0.21083000000066932,
+        "mineUpdateMs": 0.014078999999696862,
+        "avgNeighbors": 0.611
+      },
+      {
+        "frame": 5,
+        "totalMs": 3.5682919999999285,
+        "neighborSearchMs": 2.387161999999762,
+        "steeringMs": 0.156749999998965,
+        "avoidanceMs": 0.1464390000013509,
+        "integrationMs": 0.19597399999918252,
+        "mineUpdateMs": 0.015249999999582542,
+        "avgNeighbors": 0.608
+      },
+      {
+        "frame": 6,
+        "totalMs": 6.1157499999999345,
+        "neighborSearchMs": 4.753547000000367,
+        "steeringMs": 0.16246099999978014,
+        "avoidanceMs": 0.1576589999983753,
+        "integrationMs": 0.21840300000144452,
+        "mineUpdateMs": 0.01721300000008341,
+        "avgNeighbors": 0.607
+      },
+      {
+        "frame": 7,
+        "totalMs": 3.504083000000037,
+        "neighborSearchMs": 2.359963999999536,
+        "steeringMs": 0.16375399999924412,
+        "avoidanceMs": 0.14623500000027434,
+        "integrationMs": 0.19570799999962674,
+        "mineUpdateMs": 0.013625000000502041,
+        "avgNeighbors": 0.61
+      },
+      {
+        "frame": 8,
+        "totalMs": 3.66920899999991,
+        "neighborSearchMs": 2.531912999999804,
+        "steeringMs": 0.1572759999991149,
+        "avoidanceMs": 0.14426099999911912,
+        "integrationMs": 0.19939399999930174,
+        "mineUpdateMs": 0.013918000000330721,
+        "avgNeighbors": 0.611
+      },
+      {
+        "frame": 9,
+        "totalMs": 3.4342080000000124,
+        "neighborSearchMs": 2.3290550000000394,
+        "steeringMs": 0.15696700000069086,
+        "avoidanceMs": 0.14008300000273266,
+        "integrationMs": 0.19145999999761898,
+        "mineUpdateMs": 0.013376999999309191,
+        "avgNeighbors": 0.617
+      },
+      {
+        "frame": 10,
+        "totalMs": 4.224666999999954,
+        "neighborSearchMs": 2.696710000001076,
+        "steeringMs": 0.33820999999932155,
+        "avoidanceMs": 0.1651799999999639,
+        "integrationMs": 0.31433000000083666,
+        "mineUpdateMs": 0.017913000000248758,
+        "avgNeighbors": 0.617
+      },
+      {
+        "frame": 11,
+        "totalMs": 4.26987500000007,
+        "neighborSearchMs": 3.018919999999298,
+        "steeringMs": 0.16152200000169614,
+        "avoidanceMs": 0.17540600000063478,
+        "integrationMs": 0.2128170000002001,
+        "mineUpdateMs": 0.016494000000079723,
+        "avgNeighbors": 0.619
+      }
+    ],
+    "desktop_6k": [
+      {
+        "frame": 0,
+        "totalMs": 54.701499999999896,
+        "neighborSearchMs": 45.27774900000031,
+        "steeringMs": 2.8721020000064073,
+        "avoidanceMs": 0.7185429999901771,
+        "integrationMs": 0.6223019999897588,
+        "mineUpdateMs": 0.06775599999923543,
+        "avgNeighbors": 3.5906666666666665
+      },
+      {
+        "frame": 1,
+        "totalMs": 49.28300000000013,
+        "neighborSearchMs": 41.38991000000419,
+        "steeringMs": 2.758531999993693,
+        "avoidanceMs": 0.6755709999981718,
+        "integrationMs": 0.5968880000002628,
+        "mineUpdateMs": 0.03005799999800729,
+        "avgNeighbors": 3.5965
+      },
+      {
+        "frame": 2,
+        "totalMs": 51.31279100000006,
+        "neighborSearchMs": 42.00827699998604,
+        "steeringMs": 2.8203300000047875,
+        "avoidanceMs": 0.8383200000112083,
+        "integrationMs": 1.1970220000071095,
+        "mineUpdateMs": 0.028751000000283966,
+        "avgNeighbors": 3.5938333333333334
+      },
+      {
+        "frame": 3,
+        "totalMs": 50.75258399999984,
+        "neighborSearchMs": 41.85489199999347,
+        "steeringMs": 2.804201000005378,
+        "avoidanceMs": 0.8117480000162232,
+        "integrationMs": 1.1876939999920069,
+        "mineUpdateMs": 0.02903700000297249,
+        "avgNeighbors": 3.5896666666666666
+      },
+      {
+        "frame": 4,
+        "totalMs": 53.70095900000001,
+        "neighborSearchMs": 44.566080000000284,
+        "steeringMs": 2.9693949999968936,
+        "avoidanceMs": 0.8420649999995931,
+        "integrationMs": 1.2395000000055916,
+        "mineUpdateMs": 0.029633000000330867,
+        "avgNeighbors": 3.5866666666666664
+      },
+      {
+        "frame": 5,
+        "totalMs": 63.16358300000002,
+        "neighborSearchMs": 54.86267099999395,
+        "steeringMs": 3.168666999998777,
+        "avoidanceMs": 0.756001000011338,
+        "integrationMs": 0.6060189999996055,
+        "mineUpdateMs": 0.030962000001636625,
+        "avgNeighbors": 3.5845
+      },
+      {
+        "frame": 6,
+        "totalMs": 49.62091699999996,
+        "neighborSearchMs": 41.7304280000169,
+        "steeringMs": 2.780021000017314,
+        "avoidanceMs": 0.7794739999926605,
+        "integrationMs": 0.6062930000036886,
+        "mineUpdateMs": 0.02722799999878589,
+        "avgNeighbors": 3.5901666666666667
+      },
+      {
+        "frame": 7,
+        "totalMs": 56.404207999999926,
+        "neighborSearchMs": 41.938131999993175,
+        "steeringMs": 2.6872960000118837,
+        "avoidanceMs": 0.7305780000019695,
+        "integrationMs": 0.5821720000089954,
+        "mineUpdateMs": 0.027459000000590095,
+        "avgNeighbors": 3.591
+      },
+      {
+        "frame": 8,
+        "totalMs": 54.974917000000005,
+        "neighborSearchMs": 45.06479000000081,
+        "steeringMs": 2.685289000003195,
+        "avoidanceMs": 0.7367150000052334,
+        "integrationMs": 0.6107230000050095,
+        "mineUpdateMs": 0.028875000000425644,
+        "avgNeighbors": 3.585166666666667
+      },
+      {
+        "frame": 9,
+        "totalMs": 49.955167000000074,
+        "neighborSearchMs": 41.915237999993906,
+        "steeringMs": 2.745643999990307,
+        "avoidanceMs": 0.7206700000137971,
+        "integrationMs": 0.5872179999967102,
+        "mineUpdateMs": 0.02745500000219181,
+        "avgNeighbors": 3.5803333333333334
+      },
+      {
+        "frame": 10,
+        "totalMs": 51.36645900000008,
+        "neighborSearchMs": 43.494282000011026,
+        "steeringMs": 2.6857080000077076,
+        "avoidanceMs": 0.7349850000075548,
+        "integrationMs": 0.6208249999990585,
+        "mineUpdateMs": 0.027335000002040033,
+        "avgNeighbors": 3.5795
+      },
+      {
+        "frame": 11,
+        "totalMs": 75.7255419999999,
+        "neighborSearchMs": 62.326935999997886,
+        "steeringMs": 4.395826000003126,
+        "avoidanceMs": 1.0065959999974439,
+        "integrationMs": 0.6066210000026331,
+        "mineUpdateMs": 0.031055999999807682,
+        "avgNeighbors": 3.5698333333333334
+      }
+    ]
+  }
+}

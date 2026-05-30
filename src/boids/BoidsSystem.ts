@@ -41,6 +41,11 @@ export class BoidsSystem {
     avgBoidsPerCell: 0,
     simulationMs: 0,
     renderMs: 0,
+    neighborSearchMs: 0,
+    steeringMs: 0,
+    avoidanceMs: 0,
+    integrationMs: 0,
+    mineUpdateMs: 0,
     spawnCount: 0,
     despawnCount: 0,
     avgNeighbors: 0,
@@ -141,6 +146,12 @@ export class BoidsSystem {
     this.debugStats.activeBoidCount = this.cpuSim.getActiveCount()
     this.debugStats.spawnCount = stats.spawnCount
     this.debugStats.despawnCount = stats.despawnCount
+    this.debugStats.neighborSearchMs = stats.neighborSearchMs
+    this.debugStats.steeringMs = stats.steeringMs
+    this.debugStats.avoidanceMs = stats.avoidanceMs
+    this.debugStats.integrationMs = stats.integrationMs
+    this.debugStats.mineUpdateMs = stats.mineUpdateMs
+    this.debugStats.avgNeighbors = stats.avgNeighbors
     this.debugStats.activeCells = this.adapter.getActiveBoidCells(playerPosition, this.config.simulationRadius).length
     this.debugStats.gridOverflow = 0
     this.debugStats.avgBoidsPerCell = this.cpuSim.getActiveCount() > 0 && this.debugStats.activeCells > 0
@@ -218,6 +229,12 @@ export class BoidsSystem {
     this.debugStats.avgBoidsPerCell = activeBoids > 0 && activeCells.length > 0
       ? Math.round(activeBoids / activeCells.length)
       : 0
+    this.debugStats.neighborSearchMs = 0
+    this.debugStats.steeringMs = 0
+    this.debugStats.avoidanceMs = 0
+    this.debugStats.integrationMs = 0
+    this.debugStats.mineUpdateMs = 0
+    this.debugStats.avgNeighbors = 0
   }
 
   private uploadCellData(cells: ReturnType<typeof this.adapter.getActiveBoidCells>): void {
@@ -323,6 +340,11 @@ export class BoidsSystem {
       `Grid overflow: ${s.gridOverflow}`,
       `Avg boids/cell: ${s.avgBoidsPerCell}`,
       `Sim: ${s.simulationMs.toFixed(1)}ms`,
+      `Neighbor: ${s.neighborSearchMs.toFixed(1)}ms`,
+      `Steer: ${s.steeringMs.toFixed(1)}ms`,
+      `Avoid: ${s.avoidanceMs.toFixed(1)}ms`,
+      `Integrate: ${s.integrationMs.toFixed(1)}ms`,
+      `Mine: ${s.mineUpdateMs.toFixed(1)}ms`,
       `Render: ${s.renderMs.toFixed(1)}ms`,
     ].join('  |  ')
   }

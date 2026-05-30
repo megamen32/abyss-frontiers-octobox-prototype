@@ -3,7 +3,7 @@ import { Vector3 } from 'three'
 import { BoidsSpatialGrid } from '../src/boids/BoidsSpatialGrid'
 import { BoidsOctoBoxAdapter } from '../src/boids/BoidsOctoBoxAdapter'
 import { BoidsCPUSimulation } from '../src/boids/BoidsCPUSimulation'
-import { DEFAULT_BOIDS_CONFIG } from '../src/boids/BoidsConfig'
+import { DEFAULT_BOIDS_CONFIG, MINE_TYPE } from '../src/boids/BoidsConfig'
 import { BoidBehavior, BoidFlags } from '../src/boids/BoidsTypes'
 import type { BoidState } from '../src/boids/BoidsTypes'
 import type { ChunkData, LeafCell, AABB } from '../src/game/types'
@@ -258,6 +258,31 @@ describe('BoidsCPUSimulation', () => {
       expect(boids[i].position[2]).toBeGreaterThanOrEqual(-31)
       expect(boids[i].position[2]).toBeLessThanOrEqual(31)
     }
+  })
+
+  it('keeps managed mine boids frozen when updated with zero dt', () => {
+    const config = {
+      ...DEFAULT_BOIDS_CONFIG,
+      maxBoids: 10,
+      initialBoids: 0,
+      fallback: { cpuMaxBoids: 10 },
+      boidTypes: [MINE_TYPE],
+      interactions: [[]],
+    }
+    const adapter = new BoidsOctoBoxAdapter()
+    const cells = [makeFreeCell('a', 0, 0, 0, 40, 40, 40)]
+    adapter.syncChunks([makeChunk(cells)], [])
+    adapter.rebuild()
+    const sim = new BoidsCPUSimulation(config, adapter)
+    sim.upsertManagedBoid('mine', 10, 10, 10, 0, 0, 0, MINE_TYPE.typeId, BoidBehavior.LAUNCHED, 0, 0)
+
+    sim.update(0, new Vector3(12, 10, 10), new Vector3(0, 0, 0), new Vector3(0, 0, 0), new Vector3(0, 0, 1))
+
+    const mine = sim.getManagedBoid('mine')
+    expect(mine?.position).toEqual([10, 10, 10])
+    expect(mine?.velocity).toEqual([0, 0, 0])
+    expect(sim.getStats().mineUpdateMs).toBeGreaterThanOrEqual(0)
+
   })
 })
 

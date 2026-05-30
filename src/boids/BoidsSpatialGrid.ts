@@ -40,7 +40,7 @@ export class BoidsSpatialGrid {
     const cx = Math.floor(position[0] * inv)
     const cy = Math.floor(position[1] * inv)
     const cz = Math.floor(position[2] * inv)
-    const range = Math.ceil(radius * inv) + 1
+    const range = Math.ceil(radius * inv)
 
     for (let dx = -range; dx <= range; dx++) {
       for (let dy = -range; dy <= range; dy++) {

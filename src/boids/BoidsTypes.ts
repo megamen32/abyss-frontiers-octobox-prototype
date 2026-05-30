@@ -176,6 +176,11 @@ export interface BoidsDebugStats {
   avgBoidsPerCell: number
   simulationMs: number
   renderMs: number
+  neighborSearchMs: number
+  steeringMs: number
+  avoidanceMs: number
+  integrationMs: number
+  mineUpdateMs: number
   spawnCount: number
   despawnCount: number
   avgNeighbors: number

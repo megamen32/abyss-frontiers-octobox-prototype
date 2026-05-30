@@ -18,7 +18,7 @@ import { shortestWrappedDistance, wrappedChunkDistance, wrapChunkCoord } from '.
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
 import { BoidsSystem } from '../../boids/BoidsSystem';
-import { BoidBehavior } from '../../boids/BoidsTypes';
+import { BoidBehavior, type BoidsConfig } from '../../boids/BoidsTypes';
 import { MINE_TYPE, UNIFIED_WORLD_BOIDS_CONFIG } from '../../boids/BoidsConfig';
 
 const DEBUG_SETTINGS_KEYS = {
@@ -69,10 +69,7 @@ export class Game {
   private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
-  private readonly boids = new BoidsSystem({
-    ...UNIFIED_WORLD_BOIDS_CONFIG,
-    forceCPU: new URLSearchParams(window.location.search).has('cpu'),
-  });
+  private readonly boids = new BoidsSystem(createRuntimeBoidsConfig());
   private readonly mineBoidIdsByChunk = new Map<string, Set<string>>();
   private readonly autopilot = new AutopilotBot();
   private virtualJoystickEnabled = false;
@@ -99,6 +96,11 @@ export class Game {
         this.virtualJoystickEnabled = enabled;
         writeStoredBool(DEBUG_SETTINGS_KEYS.virtualJoystickEnabled, enabled);
       },
+      onToggleDebug: (enabled) => this.setDebugEnabled(enabled),
+      onToggleFps: (enabled) => this.setDebugUiVisible(enabled),
+      onToggleChunks: (enabled) => this.setChunkDebugEnabled(enabled),
+      onToggleFog: (enabled) => this.setFogEnabled(enabled),
+      onToggleAutopilot: (enabled) => this.setAutopilotEnabled(enabled),
     });
     if (this.virtualJoystickEnabled) {
       this.render.hud.setJoystickVisible(true);
@@ -155,27 +157,57 @@ export class Game {
   }
 
   private toggleDebug(): void {
-    this.debugEnabled = !this.debugEnabled;
+    this.setDebugEnabled(!this.debugEnabled);
+  }
+
+  private setDebugEnabled(enabled: boolean): void {
+    this.debugEnabled = enabled;
+    if (!enabled) {
+      this.debugUiVisible = false;
+    }
     this.render.setDebugEnabled(this.debugEnabled);
+    this.render.setDebugUiVisible(this.debugUiVisible);
     this.persistDebugSettings();
   }
 
   private toggleDebugUi(): void {
-    if (!this.debugEnabled) return;
-    this.debugUiVisible = !this.debugUiVisible;
+    this.setDebugUiVisible(!this.debugUiVisible);
+  }
+
+  private setDebugUiVisible(visible: boolean): void {
+    if (visible) {
+      this.debugEnabled = true;
+      this.render.setDebugEnabled(true);
+    }
+    this.debugUiVisible = visible;
     this.render.setDebugUiVisible(this.debugUiVisible);
     this.persistDebugSettings();
   }
 
   private toggleChunkDebug(): void {
-    this.chunkDebugEnabled = !this.chunkDebugEnabled;
+    this.setChunkDebugEnabled(!this.chunkDebugEnabled);
+  }
+
+  private setChunkDebugEnabled(enabled: boolean): void {
+    this.chunkDebugEnabled = enabled;
     this.render.setChunkDebugEnabled(this.chunkDebugEnabled);
     this.persistDebugSettings();
   }
 
   private toggleFog(): void {
-    this.fogEnabled = !this.fogEnabled;
+    this.setFogEnabled(!this.fogEnabled);
+  }
+
+  private setFogEnabled(enabled: boolean): void {
+    this.fogEnabled = enabled;
     this.render.setFogEnabled(this.fogEnabled);
+    this.persistDebugSettings();
+  }
+
+  private setAutopilotEnabled(enabled: boolean): void {
+    if (this.autopilot.isEnabled() !== enabled) {
+      this.autopilot.toggle();
+    }
     this.persistDebugSettings();
   }
 
@@ -271,8 +303,10 @@ export class Game {
     const dangerLevel = worldDangerLevel(this.player.position.y);
     const depthBand = bandForDangerLevel(dangerLevel);
     const predictor = ShipPredictor.forPlayer(this.player);
-    this.boids.update(this.paused ? 0 : dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
-    this.syncMineStateFromBoids();
+    if (!this.paused) {
+      this.boids.update(dt, this.render.getCameraPosition(), this.player.position, this.player.velocity, this.player.forward, predictor);
+      this.syncMineStateFromBoids();
+    }
     const renderStart = performance.now();
     this.render.updateFrame({
       paused: this.paused,
@@ -553,6 +587,22 @@ function updateObstacleMotion(chunk: ChunkData, dt: number): void {
     }
     obstacle.phase += dt * obstacle.angularSpeed;
   }
+}
+
+function createRuntimeBoidsConfig(): BoidsConfig {
+  const params = new URLSearchParams(window.location.search);
+  const mobile = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820;
+  const hasWebGPU = 'gpu' in navigator;
+  const forceCPU = params.has('cpu') || !hasWebGPU;
+  const maxBoids = mobile ? 1000 : forceCPU ? 2000 : UNIFIED_WORLD_BOIDS_CONFIG.maxBoids;
+  const initialBoids = mobile ? 1000 : forceCPU ? 2000 : UNIFIED_WORLD_BOIDS_CONFIG.initialBoids;
+  return {
+    ...UNIFIED_WORLD_BOIDS_CONFIG,
+    maxBoids,
+    initialBoids,
+    fallback: { cpuMaxBoids: maxBoids },
+    forceCPU,
+  };
 }
 
 function faceFromDirection(direction: Vector3): Face {

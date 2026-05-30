@@ -67,6 +67,12 @@ export class Hud {
   private readonly menuButton = document.createElement('button');
   private readonly deathOverlay = document.createElement('div');
   private readonly pauseOverlay = document.createElement('div');
+  private debugMenuToggle!: HTMLInputElement;
+  private fpsMenuToggle!: HTMLInputElement;
+  private chunkMenuToggle!: HTMLInputElement;
+  private fogMenuToggle!: HTMLInputElement;
+  private autopilotMenuToggle!: HTMLInputElement;
+  private joystickMenuToggle!: HTMLInputElement;
   private readonly joystickEl = document.createElement('div');
   private readonly joystickThumb = document.createElement('div');
   private readonly verticalUpBtn = document.createElement('button');
@@ -75,6 +81,11 @@ export class Hud {
   private onRestart: (() => void) | null = null;
   private onPause: (() => void) | null = null;
   private onToggleJoystick: ((enabled: boolean) => void) | null = null;
+  private onToggleDebug: ((enabled: boolean) => void) | null = null;
+  private onToggleFps: ((enabled: boolean) => void) | null = null;
+  private onToggleChunks: ((enabled: boolean) => void) | null = null;
+  private onToggleFog: ((enabled: boolean) => void) | null = null;
+  private onToggleAutopilot: ((enabled: boolean) => void) | null = null;
   private joystickTouchId: number | null = null;
   private joystickBaseRect: DOMRect | null = null;
   private joystickVisible = false;
@@ -145,7 +156,7 @@ export class Hud {
     this.debugPanel.append(this.fpsPanel.root, this.debugShipLabel, this.debugContent, this.debugPerfLabel, this.debugTimings, this.debugTuneLabel, this.debugTuning, this.debugBoidLabel, this.debugBoids);
 
     this.keyHints.className = 'key-hints';
-    this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause  B autopilot';
+    this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  Esc pause  B autopilot';
 
     topLeft.append(playerCard, this.debugPanel, this.keyHints);
 
@@ -179,9 +190,31 @@ export class Hud {
       <div class="pause-card">
         <h2>Paused</h2>
         <p>Press Escape to resume</p>
+        <div class="pause-menu-grid">
+          <label class="menu-row">
+            <span>Debug</span>
+            <input type="checkbox" class="menu-toggle debug-toggle" />
+          </label>
+          <label class="menu-row">
+            <span>FPS Panel</span>
+            <input type="checkbox" class="menu-toggle fps-toggle" />
+          </label>
+          <label class="menu-row">
+            <span>Chunk Bounds</span>
+            <input type="checkbox" class="menu-toggle chunk-toggle" />
+          </label>
+          <label class="menu-row">
+            <span>Fog</span>
+            <input type="checkbox" class="menu-toggle fog-toggle" />
+          </label>
+          <label class="menu-row">
+            <span>Autopilot</span>
+            <input type="checkbox" class="menu-toggle autopilot-toggle" />
+          </label>
+        </div>
         <label class="menu-row">
           <span>Virtual Joystick</span>
-          <input type="checkbox" class="menu-toggle" checked />
+          <input type="checkbox" class="menu-toggle joystick-toggle" checked />
         </label>
       </div>
     `;
@@ -198,22 +231,44 @@ export class Hud {
     this.root.append(topLeft, bottomRight, this.deathOverlay, this.pauseOverlay, this.joystickEl, this.verticalUpBtn, this.verticalDownBtn);
     parent.append(this.root);
 
-    const pauseToggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
-    if (pauseToggle) {
-      pauseToggle.addEventListener('change', () => {
-        this.setJoystickVisible(pauseToggle.checked);
-        this.onToggleJoystick?.(pauseToggle.checked);
-      });
-    }
+    this.debugMenuToggle = this.requirePauseToggle('.debug-toggle');
+    this.fpsMenuToggle = this.requirePauseToggle('.fps-toggle');
+    this.chunkMenuToggle = this.requirePauseToggle('.chunk-toggle');
+    this.fogMenuToggle = this.requirePauseToggle('.fog-toggle');
+    this.autopilotMenuToggle = this.requirePauseToggle('.autopilot-toggle');
+    this.joystickMenuToggle = this.requirePauseToggle('.joystick-toggle');
+    this.debugMenuToggle.addEventListener('change', () => this.onToggleDebug?.(this.debugMenuToggle.checked));
+    this.fpsMenuToggle.addEventListener('change', () => this.onToggleFps?.(this.fpsMenuToggle.checked));
+    this.chunkMenuToggle.addEventListener('change', () => this.onToggleChunks?.(this.chunkMenuToggle.checked));
+    this.fogMenuToggle.addEventListener('change', () => this.onToggleFog?.(this.fogMenuToggle.checked));
+    this.autopilotMenuToggle.addEventListener('change', () => this.onToggleAutopilot?.(this.autopilotMenuToggle.checked));
+    this.joystickMenuToggle.addEventListener('change', () => {
+      this.setJoystickVisible(this.joystickMenuToggle.checked);
+      this.onToggleJoystick?.(this.joystickMenuToggle.checked);
+    });
 
     this.setupJoystickTouch();
     this.setupVerticalButtons();
   }
 
-  setCallbacks(callbacks: { onRestart: () => void; onPause?: () => void; onToggleJoystick?: (enabled: boolean) => void }): void {
+  setCallbacks(callbacks: {
+    onRestart: () => void;
+    onPause?: () => void;
+    onToggleJoystick?: (enabled: boolean) => void;
+    onToggleDebug?: (enabled: boolean) => void;
+    onToggleFps?: (enabled: boolean) => void;
+    onToggleChunks?: (enabled: boolean) => void;
+    onToggleFog?: (enabled: boolean) => void;
+    onToggleAutopilot?: (enabled: boolean) => void;
+  }): void {
     this.onRestart = callbacks.onRestart;
     this.onPause = callbacks.onPause ?? null;
     this.onToggleJoystick = callbacks.onToggleJoystick ?? null;
+    this.onToggleDebug = callbacks.onToggleDebug ?? null;
+    this.onToggleFps = callbacks.onToggleFps ?? null;
+    this.onToggleChunks = callbacks.onToggleChunks ?? null;
+    this.onToggleFog = callbacks.onToggleFog ?? null;
+    this.onToggleAutopilot = callbacks.onToggleAutopilot ?? null;
   }
 
   setJoystickVisible(visible: boolean): void {
@@ -221,13 +276,19 @@ export class Hud {
     this.joystickEl.style.display = visible ? 'block' : 'none';
     this.verticalUpBtn.style.display = visible ? 'block' : 'none';
     this.verticalDownBtn.style.display = visible ? 'block' : 'none';
-    const toggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
-    if (toggle) toggle.checked = visible;
+    this.joystickMenuToggle.checked = visible;
   }
 
   syncMenuToggle(checked: boolean): void {
-    const toggle = this.pauseOverlay.querySelector('.menu-toggle') as HTMLInputElement | null;
-    if (toggle) toggle.checked = checked;
+    this.joystickMenuToggle.checked = checked;
+  }
+
+  private requirePauseToggle(selector: string): HTMLInputElement {
+    const input = this.pauseOverlay.querySelector(selector);
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error(`Missing pause toggle ${selector}`);
+    }
+    return input;
   }
 
   private setupJoystickTouch(): void {
@@ -338,6 +399,11 @@ export class Hud {
     if (s.virtualJoystickEnabled !== this.joystickVisible) {
       this.setJoystickVisible(s.virtualJoystickEnabled);
     }
+    this.debugMenuToggle.checked = s.debugEnabled;
+    this.fpsMenuToggle.checked = s.debugEnabled && s.debugUiVisible;
+    this.chunkMenuToggle.checked = s.chunkDebugEnabled;
+    this.fogMenuToggle.checked = s.fogEnabled;
+    this.autopilotMenuToggle.checked = s.autopilot;
     this.depthValue.textContent = `${Math.max(0, s.depth).toFixed(0)}m`;
     this.depthBandEl.textContent = s.depthBand;
     this.depthGaugeFill.style.setProperty('--fill', `${(s.dangerLevel * 100).toFixed(1)}%`);
@@ -395,6 +461,12 @@ export class Hud {
           `cells ${bd.activeCells}  ` +
           `overflow ${bd.gridOverflow}  ` +
           `avg/cell ${bd.avgBoidsPerCell}  ` +
+          `nbr ${bd.neighborSearchMs.toFixed(1)}  ` +
+          `steer ${bd.steeringMs.toFixed(1)}  ` +
+          `avoid ${bd.avoidanceMs.toFixed(1)}  ` +
+          `int ${bd.integrationMs.toFixed(1)}  ` +
+          `mine ${bd.mineUpdateMs.toFixed(1)}  ` +
+          `avgN ${bd.avgNeighbors.toFixed(1)}  ` +
           `sim ${bd.simulationMs.toFixed(1)}  ` +
           `render ${bd.renderMs.toFixed(1)}`;
       }

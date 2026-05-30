@@ -37,7 +37,6 @@ interface SkeletonCandidateSet {
 }
 
 interface SkeletonCandidateGroup {
-  coord: ChunkCoord;
   priority: number;
   nodes: SkeletonNodeRef[];
   edges: SkeletonEdgeRef[];
@@ -224,34 +223,27 @@ function skeletonCandidatesForMacroCoord(macro: ChunkCoord, seed: number): Skele
   if (cached) return cached;
   const origin = macroCoordCenter(wrapped);
   const groups: SkeletonCandidateGroup[] = [];
+  const edgeKeys = new Set<string>();
 
   for (let x = -1; x <= 1; x += 1) {
     for (let y = -1; y <= 1; y += 1) {
       for (let z = -1; z <= 1; z += 1) {
         const coord = wrapSkeletonCoord({ x: wrapped.x + x, y: wrapped.y + y, z: wrapped.z + z });
-        const nodes: SkeletonNodeRef[] = [];
-        const edges: SkeletonEdgeRef[] = [];
-        const nodeIds = new Set<number>();
-        const edgeKeys = new Set<string>();
-        let minX = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        let minZ = Number.POSITIVE_INFINITY;
-        let maxZ = Number.NEGATIVE_INFINITY;
-
         const node = skeletonNodeAt(coord, seed);
-        if (!nodeIds.has(node.id)) {
-          nodeIds.add(node.id);
-          const preparedNode = prepareNode(node, origin);
-          nodes.push(preparedNode);
-          minX = Math.min(minX, preparedNode.x);
-          maxX = Math.max(maxX, preparedNode.x);
-          minY = Math.min(minY, preparedNode.y);
-          maxY = Math.max(maxY, preparedNode.y);
-          minZ = Math.min(minZ, preparedNode.z);
-          maxZ = Math.max(maxZ, preparedNode.z);
-        }
+        const preparedNode = prepareNode(node, origin);
+        const nodeBounds = prepareMacroCellBounds(coord, origin);
+        const priority = Math.abs(x) + Math.abs(y) + Math.abs(z);
+        groups.push({
+          priority,
+          nodes: [preparedNode],
+          edges: [],
+          minX: nodeBounds.minX,
+          maxX: nodeBounds.maxX,
+          minY: nodeBounds.minY,
+          maxY: nodeBounds.maxY,
+          minZ: nodeBounds.minZ,
+          maxZ: nodeBounds.maxZ,
+        });
         for (const edge of skeletonEdgesForMacroCoord(coord, seed)) {
           const edgeKey = edge.a.id <= edge.b.id ? `${edge.a.id}:${edge.b.id}` : `${edge.b.id}:${edge.a.id}`;
           if (edgeKeys.has(edgeKey)) {
@@ -259,26 +251,18 @@ function skeletonCandidatesForMacroCoord(macro: ChunkCoord, seed: number): Skele
           }
           edgeKeys.add(edgeKey);
           const preparedEdge = prepareEdge(edge, origin);
-          edges.push(preparedEdge);
-          minX = Math.min(minX, preparedEdge.minX);
-          maxX = Math.max(maxX, preparedEdge.maxX);
-          minY = Math.min(minY, preparedEdge.minY);
-          maxY = Math.max(maxY, preparedEdge.maxY);
-          minZ = Math.min(minZ, preparedEdge.minZ);
-          maxZ = Math.max(maxZ, preparedEdge.maxZ);
+          groups.push({
+            priority: priority + 0.25,
+            nodes: [],
+            edges: [preparedEdge],
+            minX: preparedEdge.minX,
+            maxX: preparedEdge.maxX,
+            minY: preparedEdge.minY,
+            maxY: preparedEdge.maxY,
+            minZ: preparedEdge.minZ,
+            maxZ: preparedEdge.maxZ,
+          });
         }
-        groups.push({
-          coord,
-          priority: Math.abs(x) + Math.abs(y) + Math.abs(z),
-          nodes,
-          edges,
-          minX,
-          maxX,
-          minY,
-          maxY,
-          minZ,
-          maxZ,
-        });
       }
     }
   }
@@ -295,6 +279,30 @@ function prepareNode(node: SkeletonNode, origin: Vector3): SkeletonNodeRef {
     x: unwrapAxis(node.position.x, origin.x),
     y: unwrapAxis(node.position.y, origin.y),
     z: unwrapAxis(node.position.z, origin.z),
+  };
+}
+
+function prepareMacroCellBounds(coord: ChunkCoord, origin: Vector3): {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+} {
+  const size = skeletonMacroCellSize();
+  const center = macroCoordCenter(coord);
+  const cx = unwrapAxis(center.x, origin.x);
+  const cy = unwrapAxis(center.y, origin.y);
+  const cz = unwrapAxis(center.z, origin.z);
+  const half = size * 0.5;
+  return {
+    minX: cx - half,
+    maxX: cx + half,
+    minY: cy - half,
+    maxY: cy + half,
+    minZ: cz - half,
+    maxZ: cz + half,
   };
 }
 
