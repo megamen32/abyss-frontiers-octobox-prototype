@@ -33,8 +33,27 @@ export interface WorldSkeletonProfile {
 }
 
 interface SkeletonCandidateSet {
-  nodes: SkeletonNode[];
+  groups: SkeletonCandidateGroup[];
+}
+
+interface SkeletonCandidateGroup {
+  coord: ChunkCoord;
+  priority: number;
+  nodes: SkeletonNodeRef[];
   edges: SkeletonEdgeRef[];
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+}
+
+interface SkeletonNodeRef {
+  node: SkeletonNode;
+  x: number;
+  y: number;
+  z: number;
 }
 
 interface SkeletonEdgeRef {
@@ -144,25 +163,42 @@ export function sampleWorldSkeletonField(position: Vector3, seed: number, profil
 function sampleWorldSkeletonInternal(position: Vector3, seed: number, profile?: WorldSkeletonProfile): WorldSkeletonSample {
   const macro = skeletonMacroCoordForPosition(position);
   const candidates = skeletonCandidatesForMacroCoord(macro, seed);
+  const macroCenter = macroCoordCenter(macro);
+  const px = unwrapAxis(position.x, macroCenter.x);
+  const py = unwrapAxis(position.y, macroCenter.y);
+  const pz = unwrapAxis(position.z, macroCenter.z);
   let bestDistanceSq = Number.POSITIVE_INFINITY;
   let bestRadius = GAME_CONFIG.world.chunkSize * 3;
   _nearest.copy(position);
 
-  for (const node of candidates.nodes) {
-    if (profile) {
-      profile.skeletonCandidatesTested += 1;
-    }
-    considerPoint(position, node.position, node.radius);
-  }
-  for (const edge of candidates.edges) {
-    if (distanceSqToPreparedSegmentBounds(position, edge) >= bestDistanceSq) {
+  for (const group of candidates.groups) {
+    if (distanceSqToBounds(px, py, pz, group.minX, group.maxX, group.minY, group.maxY, group.minZ, group.maxZ) >= bestDistanceSq) {
       continue;
     }
-    if (profile) {
-      profile.skeletonCandidatesTested += 1;
+    for (const node of group.nodes) {
+      const d2 = distanceSqToPoint(px, py, pz, node.x, node.y, node.z);
+      if (d2 >= bestDistanceSq) {
+        continue;
+      }
+      if (profile) {
+        profile.skeletonCandidatesTested += 1;
+      }
+      if (d2 < bestDistanceSq) {
+        bestDistanceSq = d2;
+        bestRadius = node.node.radius;
+        _nearest.copy(node.node.position);
+      }
     }
-    closestPointOnPreparedSegment(_candidate, position, edge);
-    considerPoint(position, _candidate, edge.edge.radius);
+    for (const edge of group.edges) {
+      if (distanceSqToPreparedSegmentBounds(px, py, pz, edge) >= bestDistanceSq) {
+        continue;
+      }
+      if (profile) {
+        profile.skeletonCandidatesTested += 1;
+      }
+      closestPointOnPreparedSegment(_candidate, px, py, pz, edge);
+      considerPoint(position, _candidate, edge.edge.radius);
+    }
   }
 
   return {
@@ -186,19 +222,35 @@ function skeletonCandidatesForMacroCoord(macro: ChunkCoord, seed: number): Skele
   const key = `candidates:${nodeCacheKey(seed, wrapped)}`;
   const cached = candidateCache.get(key);
   if (cached) return cached;
-  const nodes: SkeletonNode[] = [];
-  const edges: SkeletonEdgeRef[] = [];
-  const nodeIds = new Set<number>();
-  const edgeKeys = new Set<string>();
+  const origin = macroCoordCenter(wrapped);
+  const groups: SkeletonCandidateGroup[] = [];
 
   for (let x = -1; x <= 1; x += 1) {
     for (let y = -1; y <= 1; y += 1) {
       for (let z = -1; z <= 1; z += 1) {
         const coord = wrapSkeletonCoord({ x: wrapped.x + x, y: wrapped.y + y, z: wrapped.z + z });
+        const nodes: SkeletonNodeRef[] = [];
+        const edges: SkeletonEdgeRef[] = [];
+        const nodeIds = new Set<number>();
+        const edgeKeys = new Set<string>();
+        let minX = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        let minZ = Number.POSITIVE_INFINITY;
+        let maxZ = Number.NEGATIVE_INFINITY;
+
         const node = skeletonNodeAt(coord, seed);
         if (!nodeIds.has(node.id)) {
           nodeIds.add(node.id);
-          nodes.push(node);
+          const preparedNode = prepareNode(node, origin);
+          nodes.push(preparedNode);
+          minX = Math.min(minX, preparedNode.x);
+          maxX = Math.max(maxX, preparedNode.x);
+          minY = Math.min(minY, preparedNode.y);
+          maxY = Math.max(maxY, preparedNode.y);
+          minZ = Math.min(minZ, preparedNode.z);
+          maxZ = Math.max(maxZ, preparedNode.z);
         }
         for (const edge of skeletonEdgesForMacroCoord(coord, seed)) {
           const edgeKey = edge.a.id <= edge.b.id ? `${edge.a.id}:${edge.b.id}` : `${edge.b.id}:${edge.a.id}`;
@@ -206,21 +258,50 @@ function skeletonCandidatesForMacroCoord(macro: ChunkCoord, seed: number): Skele
             continue;
           }
           edgeKeys.add(edgeKey);
-          edges.push(prepareEdge(edge));
+          const preparedEdge = prepareEdge(edge, origin);
+          edges.push(preparedEdge);
+          minX = Math.min(minX, preparedEdge.minX);
+          maxX = Math.max(maxX, preparedEdge.maxX);
+          minY = Math.min(minY, preparedEdge.minY);
+          maxY = Math.max(maxY, preparedEdge.maxY);
+          minZ = Math.min(minZ, preparedEdge.minZ);
+          maxZ = Math.max(maxZ, preparedEdge.maxZ);
         }
+        groups.push({
+          coord,
+          priority: Math.abs(x) + Math.abs(y) + Math.abs(z),
+          nodes,
+          edges,
+          minX,
+          maxX,
+          minY,
+          maxY,
+          minZ,
+          maxZ,
+        });
       }
     }
   }
 
-  const candidates = { nodes, edges };
+  groups.sort((left, right) => left.priority - right.priority);
+  const candidates = { groups };
   candidateCache.set(key, candidates);
   return candidates;
 }
 
-function prepareEdge(edge: SkeletonEdge): SkeletonEdgeRef {
-  const sx = edge.a.position.x;
-  const sy = edge.a.position.y;
-  const sz = edge.a.position.z;
+function prepareNode(node: SkeletonNode, origin: Vector3): SkeletonNodeRef {
+  return {
+    node,
+    x: unwrapAxis(node.position.x, origin.x),
+    y: unwrapAxis(node.position.y, origin.y),
+    z: unwrapAxis(node.position.z, origin.z),
+  };
+}
+
+function prepareEdge(edge: SkeletonEdge, origin: Vector3): SkeletonEdgeRef {
+  const sx = unwrapAxis(edge.a.position.x, origin.x);
+  const sy = unwrapAxis(edge.a.position.y, origin.y);
+  const sz = unwrapAxis(edge.a.position.z, origin.z);
   const ex = unwrapAxis(edge.b.position.x, sx);
   const ey = unwrapAxis(edge.b.position.y, sy);
   const ez = unwrapAxis(edge.b.position.z, sz);
@@ -338,19 +419,25 @@ function canonicalCoord(a: ChunkCoord, b: ChunkCoord): ChunkCoord {
   return linearIndex(a) <= linearIndex(b) ? wrapSkeletonCoord(a) : wrapSkeletonCoord(b);
 }
 
+function macroCoordCenter(coord: ChunkCoord): Vector3 {
+  const size = skeletonMacroCellSize();
+  return new Vector3(
+    coord.x * size + size * 0.5,
+    coord.y * size + size * 0.5,
+    coord.z * size + size * 0.5,
+  );
+}
+
 function axisSalt(axis: 'x' | 'y' | 'z'): number {
   if (axis === 'x') return 41;
   if (axis === 'y') return 43;
   return 47;
 }
 
-function closestPointOnPreparedSegment(out: Vector3, point: Vector3, edge: SkeletonEdgeRef): Vector3 {
+function closestPointOnPreparedSegment(out: Vector3, px: number, py: number, pz: number, edge: SkeletonEdgeRef): Vector3 {
   if (edge.lenSq <= 0.000001) {
     return out.copy(edge.edge.a.position);
   }
-  const px = unwrapAxis(point.x, edge.sx);
-  const py = unwrapAxis(point.y, edge.sy);
-  const pz = unwrapAxis(point.z, edge.sz);
   let t = ((px - edge.sx) * edge.vx + (py - edge.sy) * edge.vy + (pz - edge.sz) * edge.vz) / edge.lenSq;
   if (t < 0) {
     t = 0;
@@ -364,13 +451,31 @@ function closestPointOnPreparedSegment(out: Vector3, point: Vector3, edge: Skele
   );
 }
 
-function distanceSqToPreparedSegmentBounds(point: Vector3, edge: SkeletonEdgeRef): number {
-  const px = unwrapAxis(point.x, edge.sx);
-  const py = unwrapAxis(point.y, edge.sy);
-  const pz = unwrapAxis(point.z, edge.sz);
-  const dx = axisDistanceToRange(px, edge.minX, edge.maxX);
-  const dy = axisDistanceToRange(py, edge.minY, edge.maxY);
-  const dz = axisDistanceToRange(pz, edge.minZ, edge.maxZ);
+function distanceSqToPreparedSegmentBounds(px: number, py: number, pz: number, edge: SkeletonEdgeRef): number {
+  return distanceSqToBounds(px, py, pz, edge.minX, edge.maxX, edge.minY, edge.maxY, edge.minZ, edge.maxZ);
+}
+
+function distanceSqToBounds(
+  px: number,
+  py: number,
+  pz: number,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+): number {
+  const dx = axisDistanceToRange(px, minX, maxX);
+  const dy = axisDistanceToRange(py, minY, maxY);
+  const dz = axisDistanceToRange(pz, minZ, maxZ);
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function distanceSqToPoint(px: number, py: number, pz: number, x: number, y: number, z: number): number {
+  const dx = px - x;
+  const dy = py - y;
+  const dz = pz - z;
   return dx * dx + dy * dy + dz * dz;
 }
 
