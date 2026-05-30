@@ -6,7 +6,7 @@ import { SeededRandom } from '../utils/rng';
 import { worldDangerLevel } from '../utils/depth';
 
 export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: SeededRandom): Obstacle[] {
-  const isCaveMode = GAME_CONFIG.world.generationMode === ('cave' as string);
+  const isTunnelField = GAME_CONFIG.world.generationProfile === ('tunnel_field' as string);
   const obstacles: Obstacle[] = [];
   const chunkDanger = cells.reduce((maxDanger, cell) => {
     const center = aabbCenter(cell.bounds);
@@ -31,21 +31,20 @@ export function placeObstacles(cells: LeafCell[], portals: Portal[], rng: Seeded
       continue;
     }
 
-    const caveMode = isCaveMode;
     const depthDanger = worldDangerLevel(aabbCenter(cell.bounds).y);
     if (depthDanger <= 0) {
       continue;
     }
     const densityBonus = depthDanger * GAME_CONFIG.world.depthObstacleDensityBonus;
     const shouldFill =
-      caveMode
-        ? cell.caveBias <= GAME_CONFIG.world.caveWallBias
+      isTunnelField
+        ? cell.fieldBias <= GAME_CONFIG.world.tunnelWallThreshold
           || (
-            cell.caveBias < GAME_CONFIG.world.caveCoreBias
+            cell.fieldBias < GAME_CONFIG.world.tunnelCoreThreshold
             && rng.next() < Math.min(0.96, 0.78 + densityBonus)
           )
           || (
-            cell.caveBias >= GAME_CONFIG.world.caveCoreBias
+            cell.fieldBias >= GAME_CONFIG.world.tunnelCoreThreshold
             && rng.next() < densityBonus * 0.2
           )
         : rng.next() < Math.min(0.9, 0.55 + densityBonus);

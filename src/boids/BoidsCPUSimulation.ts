@@ -4,6 +4,7 @@ import { BoidBehavior, BoidFlags } from './BoidsTypes'
 import { BoidsSpatialGrid } from './BoidsSpatialGrid'
 import { BoidsOctoBoxAdapter } from './BoidsOctoBoxAdapter'
 import { GAME_CONFIG } from '../game/config'
+import { shortestWrappedDelta, shortestWrappedDistance, wrapPositionInPlace } from '../game/utils/worldTopology'
 
 const _v = new Vector3()
 const _sep = new Vector3()
@@ -100,7 +101,7 @@ export class BoidsCPUSimulation {
       b.age += dt
       _v.set(b.position[0], b.position[1], b.position[2])
 
-      if (b.flags === BoidFlags.ACTIVE && _v.distanceTo(cameraPosition) > cfg.despawnRadius) {
+      if (b.flags === BoidFlags.ACTIVE && shortestWrappedDistance(_v, cameraPosition) > cfg.despawnRadius) {
         b.flags = BoidFlags.DESPAWNING
         this.despawnCount++
       }
@@ -128,7 +129,7 @@ export class BoidsCPUSimulation {
       if (b.flags === BoidFlags.DEAD || b.flags === BoidFlags.SLEEPING || b.flags === BoidFlags.KINEMATIC) continue
 
       _v.set(b.position[0], b.position[1], b.position[2])
-      if (_v.distanceTo(playerPosition) > cfg.simulationRadius) continue
+      if (shortestWrappedDistance(_v, playerPosition) > cfg.simulationRadius) continue
 
       const tc = typeOf(cfg, b.typeId)
       const cellId = this.adapter.findCellByPosition(_v)
@@ -148,9 +149,13 @@ export class BoidsCPUSimulation {
         const other = this.boids[neighbors[n]]
         const rel = interactionOf(cfg, b.typeId, other.typeId)
         if (rel.ignore) continue
-        const dx = b.position[0] - other.position[0]
-        const dy = b.position[1] - other.position[1]
-        const dz = b.position[2] - other.position[2]
+        const deltaToOther = shortestWrappedDelta(
+          new Vector3(other.position[0], other.position[1], other.position[2]),
+          new Vector3(b.position[0], b.position[1], b.position[2]),
+        )
+        const dx = deltaToOther.x
+        const dy = deltaToOther.y
+        const dz = deltaToOther.z
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
         if (dist < tc.separationRadius && dist > 0.001) {
           _sep.x += (dx / dist / dist) * rel.separation
@@ -163,19 +168,19 @@ export class BoidsCPUSimulation {
           _ali.z += other.velocity[2] * rel.alignment
         }
         if (rel.cohesion > 0) {
-          _coh.x += other.position[0] * rel.cohesion
-          _coh.y += other.position[1] * rel.cohesion
-          _coh.z += other.position[2] * rel.cohesion
+          _coh.x += (b.position[0] - dx) * rel.cohesion
+          _coh.y += (b.position[1] - dy) * rel.cohesion
+          _coh.z += (b.position[2] - dz) * rel.cohesion
         }
         if (rel.pursuit > 0) {
-          pursuit.x += (other.position[0] - b.position[0]) * rel.pursuit
-          pursuit.y += (other.position[1] - b.position[1]) * rel.pursuit
-          pursuit.z += (other.position[2] - b.position[2]) * rel.pursuit
+          pursuit.x += -dx * rel.pursuit
+          pursuit.y += -dy * rel.pursuit
+          pursuit.z += -dz * rel.pursuit
         }
         if (rel.flee > 0) {
-          flee.x += (b.position[0] - other.position[0]) * rel.flee
-          flee.y += (b.position[1] - other.position[1]) * rel.flee
-          flee.z += (b.position[2] - other.position[2]) * rel.flee
+          flee.x += dx * rel.flee
+          flee.y += dy * rel.flee
+          flee.z += dz * rel.flee
         }
         count += 1
       }
@@ -222,9 +227,10 @@ export class BoidsCPUSimulation {
       // Player avoidance
       _avoid.set(0, 0, 0)
       if (tc.avoidPlayerRadius > 0) {
-        const pdx = b.position[0] - playerPosition.x
-        const pdy = b.position[1] - playerPosition.y
-        const pdz = b.position[2] - playerPosition.z
+        const playerDelta = shortestWrappedDelta(playerPosition, new Vector3(b.position[0], b.position[1], b.position[2]))
+        const pdx = playerDelta.x
+        const pdy = playerDelta.y
+        const pdz = playerDelta.z
         const pd = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
         if (pd < tc.avoidPlayerRadius && pd > 0.001) {
           const s = (1 - pd / tc.avoidPlayerRadius) / pd
@@ -248,9 +254,13 @@ export class BoidsCPUSimulation {
         const targetZ = predicted.z
           + Math.sin(lateralAngle) * ft.spread
 
-        const fdx = targetX - b.position[0]
-        const fdy = targetY - b.position[1]
-        const fdz = targetZ - b.position[2]
+        const followDelta = shortestWrappedDelta(
+          new Vector3(b.position[0], b.position[1], b.position[2]),
+          new Vector3(targetX, targetY, targetZ),
+        )
+        const fdx = followDelta.x
+        const fdy = followDelta.y
+        const fdz = followDelta.z
         const fd = Math.sqrt(fdx * fdx + fdy * fdy + fdz * fdz)
         if (fd > 0.001) {
           // pull proportional to distance; no hard cap so boids chase eagerly
@@ -315,6 +325,9 @@ export class BoidsCPUSimulation {
       b.position[0] += b.velocity[0] * dt
       b.position[1] += b.velocity[1] * dt
       b.position[2] += b.velocity[2] * dt
+      _v.set(b.position[0], b.position[1], b.position[2])
+      wrapPositionInPlace(_v)
+      b.position[0] = _v.x; b.position[1] = _v.y; b.position[2] = _v.z
 
       // Hard clamp to OctoBox cell only for non-following boids to prevent tunnelling
       if (tc.followTarget === null && cellId >= 0) {
@@ -371,7 +384,7 @@ export class BoidsCPUSimulation {
         cell.boundsMin.y + Math.random() * (cell.boundsMax.y - cell.boundsMin.y),
         cell.boundsMin.z + Math.random() * (cell.boundsMax.z - cell.boundsMin.z),
       )
-      if (tc.avoidPlayerRadius > 0 && _v.distanceTo(playerPosition) < tc.avoidPlayerRadius) continue
+      if (tc.avoidPlayerRadius > 0 && shortestWrappedDistance(_v, playerPosition) < tc.avoidPlayerRadius) continue
 
       const slot = this.findDeadSlot()
       if (slot < 0) break

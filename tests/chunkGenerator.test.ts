@@ -16,6 +16,13 @@ import type { InputState, Obstacle } from '../src/game/types';
 import { applyKeyboardSteering } from '../src/game/simulation/steering';
 import { bandForDangerLevel, worldDangerLevel } from '../src/game/utils/depth';
 import { chunkGenerationRadius, fogChunkRenderRadius, fogVisibilityDistance } from '../src/game/utils/visibility';
+import { chunkKey, chunkBounds } from '../src/game/utils/chunk';
+import { WORLD_SIZE, wrapChunkCoord, wrapPosition, shortestWrappedDelta, wrappedChunkDistance } from '../src/game/utils/worldTopology';
+import { faceSeed } from '../src/game/utils/hash';
+import { generatePortals } from '../src/game/content/portals';
+import { isSkeletonGraphConnected, sampleWorldSkeleton, skeletonEdgesForMacroCoord } from '../src/game/content/worldSkeleton';
+import { lodNodeKey, lodNodeSize, meshStepForLodLevel } from '../src/game/content/worldLodNodes';
+import { buildWorldFieldCache, sampleCachedWorldField } from '../src/game/content/worldFieldCache';
 
 function testInput(overrides: Partial<InputState> = {}): InputState {
   return {
@@ -93,6 +100,54 @@ describe('ChunkGenerator', () => {
     expect(leftPortal?.radius).toBe(rightPortal?.radius);
   });
 
+  it('wraps positions and chunk coordinates into the finite torus', () => {
+    const wrapped = wrapPosition(new Vector3(-1, WORLD_SIZE + 3, WORLD_SIZE * 2 + 7));
+    expect(wrapped.x).toBe(WORLD_SIZE - 1);
+    expect(wrapped.y).toBe(3);
+    expect(wrapped.z).toBe(7);
+    expect(wrapChunkCoord({ x: -1, y: 512, z: 513 })).toEqual({ x: 511, y: 0, z: 1 });
+    expect(chunkKey({ x: -1, y: 512, z: 513 })).toBe('511,0,1');
+    expect(wrappedChunkDistance({ x: 511, y: 0, z: 0 }, { x: 0, y: 0, z: 0 })).toBe(1);
+    expect(shortestWrappedDelta(new Vector3(WORLD_SIZE - 2, 0, 0), new Vector3(3, 0, 0)).x).toBe(5);
+  });
+
+  it('aligns wrapped face seeds and portal offsets across world boundaries', () => {
+    const left = { x: GAME_CONFIG.world.worldChunksPerAxis - 1, y: 0, z: 0 };
+    const right = { x: 0, y: 0, z: 0 };
+    expect(faceSeed(133742, left, 'px')).toBe(faceSeed(133742, right, 'nx'));
+
+    const leftPortal = generatePortals(133742, left, chunkBounds(left)).find((portal) => portal.face === 'px');
+    const rightPortal = generatePortals(133742, right, chunkBounds(right)).find((portal) => portal.face === 'nx');
+    expect(leftPortal).toBeDefined();
+    expect(rightPortal).toBeDefined();
+    expect(leftPortal?.neighbor).toEqual(right);
+    expect(rightPortal?.neighbor).toEqual(left);
+    expect(leftPortal?.center.y).toBe(rightPortal?.center.y);
+    expect(leftPortal?.center.z).toBe(rightPortal?.center.z);
+  });
+
+  it('uses sparse skeleton lookup and deterministic LOD node identities', () => {
+    expect(isSkeletonGraphConnected()).toBe(true);
+    const sample = sampleWorldSkeleton(new Vector3(GAME_CONFIG.world.spawn.x, GAME_CONFIG.world.spawn.y, GAME_CONFIG.world.spawn.z), 133742);
+    expect(sample.distance).toBeLessThan(sample.radius);
+    expect(skeletonEdgesForMacroCoord({ x: 0, y: 0, z: 0 }, 133742).length).toBeGreaterThan(0);
+    expect(lodNodeSize('near')).toBe(64);
+    expect(lodNodeSize('medium')).toBe(128);
+    expect(lodNodeSize('far')).toBe(256);
+    expect(meshStepForLodLevel('near')).toBe(8);
+    expect(lodNodeKey({ level: 'medium', coord: { x: 3, y: 4, z: 5 } })).toBe('medium:1,2,2');
+  });
+
+  it('builds a chunk-level field cache for cheap terrain avoidance sampling', () => {
+    const bounds = chunkBounds({ x: 0, y: 0, z: 0 });
+    const cache = buildWorldFieldCache(bounds, 133742, GAME_CONFIG.world.meshStepMedium);
+    const sample = sampleCachedWorldField(cache, new Vector3(32, 32, 32));
+    expect(cache.clearance.length).toBeGreaterThan(0);
+    expect(sample.clearance).toBeGreaterThan(0);
+    expect(Number.isFinite(sample.danger)).toBe(true);
+    expect(Number.isFinite(sample.avoidance.length())).toBe(true);
+  });
+
   it('produces varied obstacle scales across nearby chunks', () => {
     const generator = new ChunkGenerator(133742);
     const chunk = generator.generate({ x: 0, y: 0, z: 0 });
@@ -112,7 +167,7 @@ describe('ChunkGenerator', () => {
   it('keeps a freer center in cave mode with 3x3x3 splitting', () => {
     const generator = new ChunkGenerator(133742);
     const chunk = generator.generate({ x: 0, y: 0, z: 0 });
-    const sorted = [...chunk.cells].sort((a, b) => b.caveBias - a.caveBias);
+    const sorted = [...chunk.cells].sort((a, b) => b.fieldBias - a.fieldBias);
     const centralCells = sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.08)));
     const blockedCentral = centralCells.filter((cell) => cell.kind === 'obstacle').length;
     expect(blockedCentral).toBeLessThanOrEqual(Math.floor(centralCells.length * 0.4));
@@ -136,7 +191,7 @@ describe('ChunkGenerator', () => {
     }
   });
 
-  it('keeps the zero-density surface chunk free of obstacles', () => {
+  it('keeps chunks above spawn depth free of obstacles', () => {
     const generator = new ChunkGenerator(133742);
     const chunk = generator.generate({ x: 0, y: 1, z: 0 });
     expect(chunk.obstacles.length).toBe(0);
@@ -145,14 +200,14 @@ describe('ChunkGenerator', () => {
   it('raises world danger and obstacle density with depth', () => {
     const generator = new ChunkGenerator(133742);
     const shallow = generator.generate({ x: 0, y: 0, z: 0 });
-    const surface = generator.generate({ x: 0, y: 1, z: 0 });
-    const deep = generator.generate({ x: 0, y: -4, z: 0 });
+    const aboveSpawn = generator.generate({ x: 0, y: 1, z: 0 });
+    const deep = generator.generate({ x: 0, y: -10, z: 0 });
 
     expect(worldDangerLevel(GAME_CONFIG.world.spawn.y)).toBe(0);
-    expect(surface.obstacles.length).toBe(0);
+    expect(aboveSpawn.obstacles.length).toBe(0);
     expect(worldDangerLevel(deep.bounds.max.y)).toBeGreaterThan(worldDangerLevel(shallow.bounds.max.y));
     expect(bandForDangerLevel(worldDangerLevel(deep.bounds.max.y)).label).toBe('PRESSURE TRENCH');
-    const deepNonCave = generator.generate({ x: 0, y: -3, z: 0 });
+    const deepNonCave = generator.generate({ x: 0, y: -10, z: 0 });
     if (deepNonCave.obstacles.length > 0) {
       expect(deepNonCave.obstacles.length).toBeGreaterThanOrEqual(shallow.obstacles.length);
     }

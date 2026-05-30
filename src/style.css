@@ -286,14 +286,25 @@ body {
   font-weight: 700;
 }
 
+.debug-label {
+  font-size: 0.62em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(111, 209, 255, 0.35);
+  margin-top: 0.45em;
+  margin-bottom: 0.05em;
+}
+.debug-label:first-of-type {
+  margin-top: 0;
+}
+
 .debug-line {
   font-size: 0.8em;
   letter-spacing: 0.04em;
   color: #6fb8d4;
   line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .restart-btn {

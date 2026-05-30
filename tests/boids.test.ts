@@ -7,6 +7,7 @@ import { DEFAULT_BOIDS_CONFIG } from '../src/boids/BoidsConfig'
 import { BoidBehavior, BoidFlags } from '../src/boids/BoidsTypes'
 import type { BoidState } from '../src/boids/BoidsTypes'
 import type { ChunkData, LeafCell, AABB } from '../src/game/types'
+import { WORLD_SIZE } from '../src/game/utils/worldTopology'
 
 function makeBounds(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB {
   return {
@@ -40,7 +41,7 @@ function makeFreeCell(id: string, minX: number, minY: number, minZ: number, maxX
     depth: 0,
     bounds: makeBounds(minX, minY, minZ, maxX, maxY, maxZ),
     kind: 'free',
-    caveBias: 0.5,
+    fieldBias: 0.5,
   }
 }
 
@@ -79,6 +80,21 @@ describe('BoidsSpatialGrid', () => {
     expect(neighbors[0]).toBe(0)
   })
 
+  it('queries neighbors across wrapped world boundaries', () => {
+    const grid = new BoidsSpatialGrid(18)
+    const boids: BoidState[] = [
+      { position: [WORLD_SIZE - 2, 10, 10], velocity: [1, 0, 0], seed: 0, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
+      { position: [3, 10, 10], velocity: [1, 0, 0], seed: 1, typeId: 0, behavior: BoidBehavior.NONE, stateTimer: 0, life: 1, cellId: 0, flags: BoidFlags.ACTIVE, age: 0 },
+    ]
+
+    grid.clear()
+    grid.insert(0, boids[0].position)
+    grid.insert(1, boids[1].position)
+
+    const neighbors = grid.queryNeighbors([WORLD_SIZE - 1, 10, 10], 6, boids, -1, 10, null)
+    expect(neighbors.length).toBe(2)
+  })
+
   it('returns empty for empty grid', () => {
     const grid = new BoidsSpatialGrid(18)
     grid.clear()
@@ -93,7 +109,7 @@ describe('BoidsOctoBoxAdapter', () => {
     const cells = [
       makeFreeCell('a', 0, 0, 0, 20, 20, 20),
       makeFreeCell('b', 20, 0, 0, 40, 20, 20),
-      { id: 'c', depth: 0, bounds: makeBounds(40, 0, 0, 64, 20, 20), kind: 'obstacle' as const, caveBias: 0.1 },
+      { id: 'c', depth: 0, bounds: makeBounds(40, 0, 0, 64, 20, 20), kind: 'obstacle' as const, fieldBias: 0.1 },
     ]
     const chunk = makeChunk(cells, [['a', 'b']])
     adapter.syncChunks([chunk], [])
@@ -118,7 +134,7 @@ describe('BoidsOctoBoxAdapter', () => {
 
   it('returns empty neighbors for non-free cells', () => {
     const adapter = new BoidsOctoBoxAdapter()
-    adapter.syncChunks([makeChunk([{ id: 'x', depth: 0, bounds: makeBounds(0, 0, 0, 10, 10, 10), kind: 'obstacle' as const, caveBias: 0.1 }])], [])
+    adapter.syncChunks([makeChunk([{ id: 'x', depth: 0, bounds: makeBounds(0, 0, 0, 10, 10, 10), kind: 'obstacle' as const, fieldBias: 0.1 }])], [])
     const active = adapter.getActiveBoidCells(new Vector3(5, 5, 5), 50)
     expect(active.length).toBe(0)
   })

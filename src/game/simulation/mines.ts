@@ -3,6 +3,7 @@ import { GAME_CONFIG } from '../config';
 import type { ChunkData, Mine, Obstacle, PlayerState } from '../types';
 import { worldToChunkCoord } from '../utils/chunk';
 import { depthBelowSurface } from '../utils/depth';
+import { shortestWrappedDelta, shortestWrappedDistance } from '../utils/worldTopology';
 
 const _toPlayer = new Vector3();
 const _relativeVelocity = new Vector3();
@@ -16,7 +17,7 @@ function chunkDepth(chunk: ChunkData): number {
 }
 
 function mineLeadTime(mine: Mine, player: PlayerState): number {
-  _toPlayer.copy(player.position).sub(mine.position);
+  _toPlayer.copy(shortestWrappedDelta(mine.position, player.position));
   const distance = _toPlayer.length();
   if (distance <= 0.0001) {
     return MINE_LEAD_TIME_MIN;
@@ -52,7 +53,7 @@ export function updateMinesInChunk(chunk: ChunkData, player: PlayerState, dt: nu
     if (mine.state === 'rocket') {
       mine.targetPosition = mineAimTarget(mine, player);
 
-      const distance = mine.position.distanceTo(player.position);
+      const distance = shortestWrappedDistance(mine.position, player.position);
       if (distance <= GAME_CONFIG.mines.rocketToLaunchedDistance) {
         mine.state = 'launched';
       }
@@ -69,7 +70,7 @@ export function updateMinesInChunk(chunk: ChunkData, player: PlayerState, dt: nu
     }
 
     if (mine.state === 'idle') {
-      const distance = mine.position.distanceTo(player.position);
+      const distance = shortestWrappedDistance(mine.position, player.position);
       if (distance <= mine.triggerRadius) {
         mine.targetPosition = mineAimTarget(mine, player);
         mine.telegraphTimer = GAME_CONFIG.mines.telegraphDuration;
@@ -107,7 +108,7 @@ export function updateMinesInChunk(chunk: ChunkData, player: PlayerState, dt: nu
 }
 
 export function mineHitsPlayer(mine: Mine, player: PlayerState): boolean {
-  return mine.state !== 'dead' && mine.position.distanceTo(player.position) <= player.radius + mine.radius;
+  return mine.state !== 'dead' && shortestWrappedDistance(mine.position, player.position) <= player.radius + mine.radius;
 }
 
 export function collidesWithObstacle(position: Vector3, radius: number, obstacle: Obstacle): boolean {

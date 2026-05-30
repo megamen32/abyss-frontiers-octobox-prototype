@@ -4,7 +4,7 @@ import type { AABB, ChunkCoord, ChunkData, Face, Obstacle } from '../types';
 import { detectCaveChunk } from '../content/caveSystem';
 import { RenderApp } from '../render/App';
 import { ChunkManager } from './chunkManager';
-import { overlapsObstacle, resolvePlayerCaveCollision, resolvePlayerObstacleCollision, resolvePlayerSurfaceCollision, sweptSphereHitsObstacle } from './collisions';
+import { overlapsObstacle, resolvePlayerCaveCollision, resolvePlayerObstacleCollision, sweptSphereHitsObstacle } from './collisions';
 import { InputController } from './input';
 import { mineHitsPlayer, updateMinesInChunk } from './mines';
 import { applyDamage, createInitialPlayerState, travelDirection, updatePlayer } from './player';
@@ -14,6 +14,7 @@ import { applyKeyboardSteering } from './steering';
 import { ShipPredictor } from './shipPredictor';
 import { bandForDangerLevel, worldDangerLevel } from '../utils/depth';
 import { chunkKey, worldToChunkCoord } from '../utils/chunk';
+import { shortestWrappedDistance, wrappedChunkDistance, wrapChunkCoord } from '../utils/worldTopology';
 import { SpawnBudgetController } from './spawnBudget';
 import { FrameProfiler } from './frameProfiler';
 import { BoidsSystem } from '../../boids/BoidsSystem';
@@ -68,7 +69,10 @@ export class Game {
   private paused = false;
   private readonly spawnBudget = new SpawnBudgetController();
   private readonly profiler = new FrameProfiler();
-  private readonly boids = new BoidsSystem(UNIFIED_WORLD_BOIDS_CONFIG);
+  private readonly boids = new BoidsSystem({
+    ...UNIFIED_WORLD_BOIDS_CONFIG,
+    forceCPU: new URLSearchParams(window.location.search).has('cpu'),
+  });
   private readonly mineBoidIdsByChunk = new Map<string, Set<string>>();
   private readonly autopilot = new AutopilotBot();
   private virtualJoystickEnabled = false;
@@ -103,6 +107,9 @@ export class Game {
     this.render.addBoids(this.boids);
   }
 
+  private frameCount = 0;
+  private watchInterval: ReturnType<typeof setInterval> | null = null;
+
   start(): void {
     this.running = true;
     const initial = this.chunkManager.syncAround(this.player.position, travelDirection(this.player), this.player.speed);
@@ -111,6 +118,24 @@ export class Game {
     this.boids.syncChunks(initial.added, initial.removed);
     this.syncChunkMineBoids(initial.added, initial.removed);
     requestAnimationFrame(this.loop);
+
+    if (new URLSearchParams(window.location.search).has('diag')) {
+      this.startWatchdog();
+    }
+  }
+
+  private startWatchdog(): void {
+    if (this.watchInterval !== null) {
+      return;
+    }
+    this.watchInterval = setInterval(() => {
+      const prev = this.frameCount;
+      setTimeout(() => {
+        if (this.frameCount === prev) {
+          console.warn('[DIAG] Game loop appears stuck — no frame advance in 1s');
+        }
+      }, 1000);
+    }, 2000);
   }
 
   private restart(): void {
@@ -164,6 +189,7 @@ export class Game {
     }
     const rawDt = Math.max(0.0001, (timestamp - this.lastFrameTime || 16.6) / 1000);
     const dt = Math.min(0.05, rawDt);
+    this.frameCount++;
     const frameStart = performance.now();
     this.lastFrameTime = timestamp;
     this.fps = 1 / rawDt;
@@ -256,7 +282,7 @@ export class Game {
       fps: this.fps,
       seed: this.seed,
       chunkCoord: this.currentChunk,
-      distance: this.player.position.distanceTo(this.spawnPosition),
+      distance: shortestWrappedDistance(this.player.position, this.spawnPosition),
       depth: this.spawnPosition.y - this.player.position.y,
       dangerLevel,
       depthBand: depthBand.label,
@@ -303,7 +329,7 @@ export class Game {
       if (loot.collected || !this.player.alive) {
         continue;
       }
-      if (loot.position.distanceTo(this.player.position) <= this.player.radius + loot.radius) {
+      if (shortestWrappedDistance(loot.position, this.player.position) <= this.player.radius + loot.radius) {
         loot.collected = true;
         this.player.loot += loot.value;
       }
@@ -311,13 +337,7 @@ export class Game {
   }
 
   private handleSurfaceCollision(): boolean {
-    if (!this.player.alive || this.player.position.y <= this.spawnPosition.y) {
-      return false;
-    }
-
-    resolvePlayerSurfaceCollision(this.player, this.spawnPosition.y);
-    applyDamage(this.player, GAME_CONFIG.collision.surfaceDamage);
-    return !this.player.alive;
+    return false;
   }
 
   private handleCollisions(chunk: ChunkData): void {
@@ -414,7 +434,7 @@ export class Game {
   private getChunksWithinRadius(radius: number): ChunkData[] {
     const chunks: ChunkData[] = [];
     for (const chunk of this.chunkManager.activeChunks.values()) {
-      if (chunkDistance(this.currentChunk, chunk.coord) <= radius) {
+      if (wrappedChunkDistance(this.currentChunk, chunk.coord) <= radius) {
         chunks.push(chunk);
       }
     }
@@ -477,7 +497,8 @@ export class Game {
     for (const time of [Math.min(1.5, horizon), Math.min(3, horizon), horizon]) {
       const center = worldToChunkCoord(predictor.predict(time));
       for (const coord of expandCaveFront(center, entranceFace, mouthRadiusChunks)) {
-        coords.set(chunkKey(coord), { coord, entranceFace, clusterCenter: center, mouthRadiusChunks });
+        const wrapped = wrapChunkCoord(coord);
+        coords.set(chunkKey(wrapped), { coord: wrapped, entranceFace, clusterCenter: center, mouthRadiusChunks });
       }
     }
     return [...coords.values()];
@@ -589,8 +610,4 @@ function clampObstacleToBounds(obstacle: Obstacle): void {
   obstacle.position.x = Math.min(box.max.x, Math.max(box.min.x, obstacle.position.x));
   obstacle.position.y = Math.min(box.max.y, Math.max(box.min.y, obstacle.position.y));
   obstacle.position.z = Math.min(box.max.z, Math.max(box.min.z, obstacle.position.z));
-}
-
-function chunkDistance(a: ChunkCoord, b: ChunkCoord): number {
-  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.z - b.z));
 }

@@ -6,7 +6,7 @@ Browser-based 3D space game (Three.js + TypeScript + Vite). Player flies a ship 
 
 ```bash
 npm run build          # tsc --noEmit + vite build (must pass before committing)
-npm run dev            # vite dev server on 0.0.0.0:4173
+npm run dev            # vite dev server on 127.0.0.1:4173
 npm test               # vitest run (unit tests in tests/)
 npm run test:render    # playwright e2e (requires dev server at 127.0.0.1:4173)
 npx tsc --noEmit       # typecheck only

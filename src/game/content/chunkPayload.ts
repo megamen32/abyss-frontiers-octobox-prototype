@@ -14,7 +14,7 @@ export interface SerializedChunkData {
     id: string;
     depth: number;
     kind: LeafCell['kind'];
-    caveBias: number;
+    fieldBias: number;
     bounds: { min: [number, number, number]; max: [number, number, number] };
   }>;
   portals: Array<{
@@ -89,7 +89,7 @@ export function dehydrateChunk(chunk: ChunkData): SerializedChunkData {
       id: cell.id,
       depth: cell.depth,
       kind: cell.kind,
-      caveBias: cell.caveBias,
+      fieldBias: cell.fieldBias,
       bounds: dehydrateBounds(cell.bounds),
     })),
     portals: chunk.portals.map((portal) => ({
@@ -165,7 +165,7 @@ export function hydrateChunk(data: SerializedChunkData): ChunkData {
       id: cell.id,
       depth: cell.depth,
       kind: cell.kind,
-      caveBias: cell.caveBias,
+      fieldBias: cell.fieldBias,
       bounds: hydrateBounds(cell.bounds),
     })),
     portals: data.portals.map((portal) => ({

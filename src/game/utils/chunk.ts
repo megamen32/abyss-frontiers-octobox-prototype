@@ -1,23 +1,27 @@
 import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { AABB, ChunkCoord } from '../types';
+import { wrapChunkCoord, wrapPosition } from './worldTopology';
 
 export function chunkKey(coord: ChunkCoord): string {
-  return `${coord.x},${coord.y},${coord.z}`;
+  const wrapped = wrapChunkCoord(coord);
+  return `${wrapped.x},${wrapped.y},${wrapped.z}`;
 }
 
 export function worldToChunkCoord(position: Vector3): ChunkCoord {
   const size = GAME_CONFIG.world.chunkSize;
+  const wrapped = wrapPosition(position);
   return {
-    x: Math.floor(position.x / size),
-    y: Math.floor(position.y / size),
-    z: Math.floor(position.z / size),
+    x: Math.floor(wrapped.x / size),
+    y: Math.floor(wrapped.y / size),
+    z: Math.floor(wrapped.z / size),
   };
 }
 
 export function chunkBounds(coord: ChunkCoord): AABB {
   const size = GAME_CONFIG.world.chunkSize;
-  const min = new Vector3(coord.x * size, coord.y * size, coord.z * size);
+  const wrapped = wrapChunkCoord(coord);
+  const min = new Vector3(wrapped.x * size, wrapped.y * size, wrapped.z * size);
   const max = min.clone().addScalar(size);
   return { min, max };
 }

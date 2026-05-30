@@ -54,7 +54,9 @@ export class BoidsSystem {
     this.cpuSim = new BoidsCPUSimulation(this.config, this.adapter)
     this.renderer = new BoidsRenderer(this.config)
 
-    this.tryInitGPU()
+    if (!this.config.forceCPU) {
+      this.tryInitGPU()
+    }
   }
 
   private async tryInitGPU(): Promise<void> {
@@ -66,8 +68,9 @@ export class BoidsSystem {
         this.gpuResources = res
         this.useGPU = true
       }
-    } catch {
+    } catch (e) {
       this.useGPU = false
+      console.warn('[Boids] WebGPU init failed, using CPU:', e)
     }
     this.gpuInitializing = false
   }

@@ -112,6 +112,12 @@ export const GAME_CONFIG = {
   world: {
     // Side length of a single cubic chunk in world units. All chunk coordinates are multiples of this.
     chunkSize: 64,
+    worldChunksPerAxis: 512,
+    skeletonMacroCellsPerAxis: 16,
+    skeletonLoopProbability: 0.18,
+    meshStepNear: 8,
+    meshStepMedium: 16,
+    meshStepFar: 32,
     // Radius of chunks (in chunk units) in which interactive gameplay events (mines, loot) update.
     // 0 = only the current chunk.
     interactiveRadius: 0,
@@ -197,15 +203,9 @@ export const GAME_CONFIG = {
     maxLootPerChunk: 20,
     // Number of web workers dedicated to building chunk geometry in the background.
     chunkBuildWorkers: 2,
-    // Content generation strategy. 'scatter' = random octobox-based obstacles.
-    // Future modes may include 'cave' for fully procedural cave tunnels.
-    generationMode: 'cave',
-    // Cave bias value at or above which a cell is considered part of the cave core (void interior).
-    // Core cells are mostly kept empty to form the tunnel passage.
-    caveCoreBias: 0.72,
-    // Cave bias value at or below which a cell is considered part of the cave wall (solid exterior).
-    // Wall cells receive heavy obstacle fill to form solid tunnel walls.
-    caveWallBias: 0.6,
+    generationProfile: 'tunnel_field',
+    tunnelCoreThreshold: 0.72,
+    tunnelWallThreshold: 0.6,
   },
 
   collision: {

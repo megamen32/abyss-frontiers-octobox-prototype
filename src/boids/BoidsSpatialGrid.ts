@@ -1,11 +1,14 @@
 import type { BoidState } from './BoidsTypes'
+import { WORLD_SIZE } from '../game/utils/worldTopology'
 
 export class BoidsSpatialGrid {
   private invCellSize: number
+  private worldCellCount: number
   private cells = new Map<number, number[]>()
 
   constructor(_cellSize: number) {
     this.invCellSize = 1 / _cellSize
+    this.worldCellCount = Math.ceil(WORLD_SIZE / _cellSize)
   }
 
   clear(): void {
@@ -50,9 +53,9 @@ export class BoidsSpatialGrid {
             const idx = cell[i]
             if (idx === excludeIndex) continue
             const other = boids[idx]
-            const ddx = other.position[0] - position[0]
-            const ddy = other.position[1] - position[1]
-            const ddz = other.position[2] - position[2]
+            const ddx = shortestAxisDelta(position[0], other.position[0])
+            const ddy = shortestAxisDelta(position[1], other.position[1])
+            const ddz = shortestAxisDelta(position[2], other.position[2])
             const dist2 = ddx * ddx + ddy * ddy + ddz * ddz
             if (dist2 > r2) continue
             if (connectedCellIds !== null && other.cellId >= 0 && !connectedCellIds.has(other.cellId)) continue
@@ -75,6 +78,23 @@ export class BoidsSpatialGrid {
   }
 
   private packCell(cx: number, cy: number, cz: number): number {
-    return ((cx + 50000) * 100000 + (cy + 50000)) * 100000 + (cz + 50000)
+    const x = wrapCell(cx, this.worldCellCount)
+    const y = wrapCell(cy, this.worldCellCount)
+    const z = wrapCell(cz, this.worldCellCount)
+    return (x * this.worldCellCount + y) * this.worldCellCount + z
   }
+}
+
+function wrapCell(value: number, size: number): number {
+  return ((value % size) + size) % size
+}
+
+function shortestAxisDelta(from: number, to: number): number {
+  let delta = to - from
+  if (delta > WORLD_SIZE * 0.5) {
+    delta -= WORLD_SIZE
+  } else if (delta < -WORLD_SIZE * 0.5) {
+    delta += WORLD_SIZE
+  }
+  return delta
 }

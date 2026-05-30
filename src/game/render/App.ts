@@ -1071,7 +1071,11 @@ function dampAngle(current: number, target: number, blend: number): number {
 }
 
 function chunkDistance(a: ChunkCoord, b: ChunkCoord): number {
-  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.z - b.z));
+  const size = GAME_CONFIG.world.worldChunksPerAxis;
+  const dx = Math.min(Math.abs(a.x - b.x), size - Math.abs(a.x - b.x));
+  const dy = Math.min(Math.abs(a.y - b.y), size - Math.abs(a.y - b.y));
+  const dz = Math.min(Math.abs(a.z - b.z), size - Math.abs(a.z - b.z));
+  return Math.max(dx, dy, dz);
 }
 
 function disposeGroupMeshes(group: Group): void {

@@ -1,7 +1,7 @@
 SHELL := /bin/zsh
 
 PORT ?= 4173
-HOST ?= 0.0.0.0
+HOST ?= 127.0.0.1
 PID_FILE := .vite-dev.pid
 LOG_FILE := .vite-dev.log
 

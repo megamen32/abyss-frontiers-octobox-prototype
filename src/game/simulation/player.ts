@@ -2,6 +2,7 @@ import { MathUtils, Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { PlayerState } from '../types';
 import { depthBelowSurface, depthProgress } from '../utils/depth';
+import { wrapPositionInPlace, WORLD_SIZE } from '../utils/worldTopology';
 import { angleBetweenVectors, clampLength, smoothstep, slerpVector } from './flightMath';
 import { getRuntimeFlightTuning } from './runtimeTuning';
 
@@ -34,6 +35,7 @@ export function updatePlayer(player: PlayerState, dt: number): void {
   if (!player.alive) {
     player.velocity.multiplyScalar(Math.max(0, 1 - GAME_CONFIG.ship.baseDrag * 2.5 * dt));
     player.position.addScaledVector(player.velocity, dt);
+    wrapPlayerPosition(player);
     player.speed = player.velocity.length();
     return;
   }
@@ -75,7 +77,22 @@ export function updatePlayer(player: PlayerState, dt: number): void {
   slerpVector(player.forward, desiredForward, visualBlend);
 
   player.position.addScaledVector(player.velocity, dt);
+  wrapPlayerPosition(player);
   player.invulnerabilityTimer = Math.max(0, player.invulnerabilityTimer - dt);
+}
+
+function wrapPlayerPosition(player: PlayerState): void {
+  const beforeX = player.position.x;
+  const beforeY = player.position.y;
+  const beforeZ = player.position.z;
+  wrapPositionInPlace(player.position);
+  if (
+    Math.abs(player.position.x - beforeX) > WORLD_SIZE * 0.5 ||
+    Math.abs(player.position.y - beforeY) > WORLD_SIZE * 0.5 ||
+    Math.abs(player.position.z - beforeZ) > WORLD_SIZE * 0.5
+  ) {
+    player.previousPosition.copy(player.position);
+  }
 }
 
 export function applyDamage(player: PlayerState, damage: number): void {

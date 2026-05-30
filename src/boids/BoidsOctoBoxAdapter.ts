@@ -2,6 +2,8 @@ import { Vector3 } from 'three'
 import type { ChunkData, LeafCell } from '../game/types'
 import type { BoidWorldCell } from './BoidsTypes'
 import { aabbCenter, aabbSize } from '../game/utils/chunk'
+import { shortestWrappedDelta } from '../game/utils/worldTopology'
+import { buildWorldFieldCache, sampleCachedWorldField, type WorldFieldCache } from '../game/content/worldFieldCache'
 
 export class BoidsOctoBoxAdapter {
   private chunks = new Map<string, ChunkData>()
@@ -9,6 +11,7 @@ export class BoidsOctoBoxAdapter {
   private worldCells: BoidWorldCell[] = []
   private cellIdMap = new Map<string, number>()
   private adjacencyMap = new Map<string, Set<string>>()
+  private fieldCaches = new Map<string, WorldFieldCache>()
   private dirty = true
 
   syncChunks(added: ChunkData[], removed: string[]): void {
@@ -29,9 +32,12 @@ export class BoidsOctoBoxAdapter {
     this.worldCells = []
     this.cellIdMap.clear()
     this.adjacencyMap.clear()
+    this.fieldCaches.clear()
 
     let cellIndex = 0
     for (const [chunkKey, chunk] of this.chunks) {
+      const cache = buildWorldFieldCache(chunk.bounds, chunk.seed)
+      this.fieldCaches.set(chunkKey, cache)
       for (const cell of chunk.cells) {
         if (cell.kind !== 'free') continue
         const globalId = `${chunkKey}:${cell.id}`
@@ -42,10 +48,8 @@ export class BoidsOctoBoxAdapter {
         const size = aabbSize(cell.bounds)
         const openness = Math.min(size.x, size.y, size.z) / Math.max(size.x, size.y, size.z, 1)
 
-        const flow = new Vector3()
-        flow.copy(cell.bounds.max).add(cell.bounds.min).multiplyScalar(0.5)
-        flow.y -= center.y
-        flow.normalize().multiplyScalar(0.5)
+        const field = sampleCachedWorldField(cache, center)
+        const flow = field.avoidance
 
         this.worldCells.push({
           id: cellIndex,
@@ -53,7 +57,7 @@ export class BoidsOctoBoxAdapter {
           boundsMax: cell.bounds.max.clone(),
           flow,
           openness,
-          danger: 0,
+          danger: field.danger,
           targetDensity: Math.floor(openness * 15) + 3,
           maxDensity: Math.floor(openness * 30) + 5,
           isFree: true,
@@ -100,9 +104,10 @@ export class BoidsOctoBoxAdapter {
       const cx = (c.boundsMin.x + c.boundsMax.x) * 0.5
       const cy = (c.boundsMin.y + c.boundsMax.y) * 0.5
       const cz = (c.boundsMin.z + c.boundsMax.z) * 0.5
-      const dx = cx - center.x
-      const dy = cy - center.y
-      const dz = cz - center.z
+      const delta = shortestWrappedDelta(center, new Vector3(cx, cy, cz))
+      const dx = delta.x
+      const dy = delta.y
+      const dz = delta.z
       return dx * dx + dy * dy + dz * dz <= r2
     })
   }

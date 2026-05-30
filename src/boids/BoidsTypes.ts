@@ -87,6 +87,7 @@ export interface BoidFallbackConfig {
 
 export interface BoidsConfig {
   enabled: boolean
+  forceCPU?: boolean
   maxBoids: number
   initialBoids: number
   simulationRadius: number

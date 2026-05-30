@@ -20,6 +20,7 @@ import { chunkBounds, chunkKey } from '../utils/chunk';
 import { depthBelowSurface } from '../utils/depth';
 import { faceSeed } from '../utils/hash';
 import { SeededRandom } from '../utils/rng';
+import { wrapChunkCoord } from '../utils/worldTopology';
 
 export interface CaveEntrance {
   face: Face;
@@ -50,10 +51,11 @@ export function detectCaveChunk(
   coord: ChunkCoord,
 ): CaveEntrance | null {
   if (!GAME_CONFIG.cave.enabled) return null;
-  const chunkMinY = coord.y * GAME_CONFIG.world.chunkSize;
+  const wrapped = wrapChunkCoord(coord);
+  const chunkMinY = wrapped.y * GAME_CONFIG.world.chunkSize;
   if (depthBelowSurface(chunkMinY) <= 0) return null;
   for (const face of ['nx', 'ny', 'nz'] as Face[]) {
-    const seed = faceSeed(globalSeed, coord, face);
+    const seed = faceSeed(globalSeed, wrapped, face);
     const rng = new SeededRandom(seed);
     if (rng.next() < GAME_CONFIG.cave.entranceProbability) {
       return { face, seed };
@@ -67,8 +69,9 @@ export function detectCaveEntranceOnPositiveFaces(
   coord: ChunkCoord,
 ): CaveEntrance | null {
   if (!GAME_CONFIG.cave.enabled) return null;
+  const wrapped = wrapChunkCoord(coord);
   for (const face of ['px', 'py', 'pz'] as Face[]) {
-    const seed = faceSeed(globalSeed, coord, face);
+    const seed = faceSeed(globalSeed, wrapped, face);
     const rng = new SeededRandom(seed);
     if (rng.next() < GAME_CONFIG.cave.entranceProbability) {
       return { face, seed };
@@ -669,7 +672,7 @@ function buildCaveCells(samples: CaveSample[]): LeafCell[] {
         max: new Vector3(maxX, maxY, maxZ),
       },
       kind: 'free',
-      caveBias: 1,
+      fieldBias: 1,
     });
   }
 

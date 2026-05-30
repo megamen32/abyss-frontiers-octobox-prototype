@@ -3,6 +3,7 @@ import { GAME_CONFIG } from '../config';
 import { detectCaveChunk } from '../content/caveSystem';
 import type { AABB, ChunkBuildTimings, ChunkCoord, ChunkData, DebugTimingSnapshot, Face, ChunkSyncResult } from '../types';
 import { chunkKey, intersectsAabb, worldToChunkCoord } from '../utils/chunk';
+import { shortestWrappedDelta, wrappedChunkDistance } from '../utils/worldTopology';
 import {
   chunkEvictionRadius,
   fogVisibilityDistance,
@@ -134,9 +135,10 @@ export class ChunkManager {
       const cx = (chunk.bounds.min.x + chunk.bounds.max.x) * 0.5;
       const cy = (chunk.bounds.min.y + chunk.bounds.max.y) * 0.5;
       const cz = (chunk.bounds.min.z + chunk.bounds.max.z) * 0.5;
-      const dx = cx - position.x;
-      const dy = cy - position.y;
-      const dz = cz - position.z;
+      const delta = shortestWrappedDelta(position, new Vector3(cx, cy, cz));
+      const dx = delta.x;
+      const dy = delta.y;
+      const dz = delta.z;
       if (dx * dx + dy * dy + dz * dz < noSpawnDistSq) {
         continue;
       }
@@ -209,7 +211,7 @@ export function prioritizedChunkCoords(
           queue.push({ coord, score: Number.POSITIVE_INFINITY });
           continue;
         }
-        const chunkLen = offset.length();
+        const chunkLen = wrappedChunkDistance(currentCoord, coord);
         const direction = offset.normalize();
         const forwardness = direction.dot(normalizedForward);
         // Asymmetric generation: full radius forward, half sideways, 1 chunk behind.

@@ -1,5 +1,6 @@
 import { MathUtils } from 'three';
 import { GAME_CONFIG } from '../config';
+import { WORLD_SIZE, wrapScalar } from './worldTopology';
 
 export interface DepthBand {
   label: string;
@@ -14,7 +15,14 @@ const DEPTH_BANDS: Array<{ min: number; band: DepthBand }> = [
 ];
 
 export function depthBelowSurface(positionY: number): number {
-  return Math.max(0, GAME_CONFIG.world.spawn.y - positionY);
+  const y = wrapScalar(positionY);
+  let delta = GAME_CONFIG.world.spawn.y - y;
+  if (delta > WORLD_SIZE * 0.5) {
+    delta -= WORLD_SIZE;
+  } else if (delta < -WORLD_SIZE * 0.5) {
+    delta += WORLD_SIZE;
+  }
+  return Math.max(0, delta);
 }
 
 export function depthProgress(depth: number, rampDistance: number): number {

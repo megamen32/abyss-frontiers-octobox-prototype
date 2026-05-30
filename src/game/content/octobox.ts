@@ -3,19 +3,20 @@ import { GAME_CONFIG } from '../config';
 import type { AABB, LeafCell } from '../types';
 import { SeededRandom } from '../utils/rng';
 import { worldDangerLevel } from '../utils/depth';
+import { sampleWorldField } from './worldField';
 
 export function generateOctoBoxLeaves(bounds: AABB, seed: number): LeafCell[] {
   const rng = new SeededRandom(seed);
   const leaves: LeafCell[] = [];
-  split(bounds, 0, 'root', rng, leaves);
+  split(bounds, 0, 'root', rng, leaves, seed);
   return leaves;
 }
 
-function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leaves: LeafCell[]): void {
+function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leaves: LeafCell[], seed: number): void {
   const size = bounds.max.clone().sub(bounds.min);
   const minSize = Math.min(size.x, size.y, size.z);
-  const caveBias = computeCaveBias(bounds);
-  const density = estimateDensity(bounds, caveBias);
+  const fieldBias = computeFieldBias(bounds, seed);
+  const density = estimateDensity(bounds, fieldBias);
   const divisions = chooseDivisions(density);
   const minLeafSize = getMinLeafSize();
   const maxLeafSize = getMaxLeafSize();
@@ -28,7 +29,7 @@ function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leave
     (!forceSplit && depth > 0 && rng.next() > splitProbabilityForDensity(density));
 
   if (shouldStop) {
-    leaves.push({ id, depth, bounds, kind: 'empty', caveBias });
+    leaves.push({ id, depth, bounds, kind: 'empty', fieldBias });
     return;
   }
 
@@ -41,7 +42,7 @@ function split(bounds: AABB, depth: number, id: string, rng: SeededRandom, leave
       for (let zi = 0; zi < divisions; zi += 1) {
         const childMin = new Vector3(splitX[xi], splitY[yi], splitZ[zi]);
         const childMax = new Vector3(splitX[xi + 1], splitY[yi + 1], splitZ[zi + 1]);
-        split({ min: childMin, max: childMax }, depth + 1, `${id}-${childIndex}`, rng, leaves);
+        split({ min: childMin, max: childMax }, depth + 1, `${id}-${childIndex}`, rng, leaves, seed);
         childIndex += 1;
       }
     }
@@ -96,20 +97,13 @@ function getMaxLeafSize(): number {
   return shipDiameter * GAME_CONFIG.world.octoboxMaxCellSizeMultiplier;
 }
 
-function computeCaveBias(bounds: AABB): number {
+function computeFieldBias(bounds: AABB, seed: number): number {
   const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
-  const chunkSize = GAME_CONFIG.world.chunkSize;
-  const chunkCenter = new Vector3(
-    Math.floor(center.x / chunkSize) * chunkSize + chunkSize * 0.5,
-    Math.floor(center.y / chunkSize) * chunkSize + chunkSize * 0.5,
-    Math.floor(center.z / chunkSize) * chunkSize + chunkSize * 0.5,
-  );
-  const normalized = center.distanceTo(chunkCenter) / (chunkSize * 0.85);
-  return Math.max(0, 1 - normalized);
+  return sampleWorldField(center, seed).fieldBias;
 }
 
-function estimateDensity(bounds: AABB, caveBias: number): number {
-  if (GAME_CONFIG.world.generationMode !== ('cave' as string)) {
+function estimateDensity(bounds: AABB, fieldBias: number): number {
+  if (GAME_CONFIG.world.generationProfile !== ('tunnel_field' as string)) {
     return 0.65;
   }
 
@@ -124,13 +118,13 @@ function estimateDensity(bounds: AABB, caveBias: number): number {
   const sizePressure = Math.min(1, minSize / maxLeafSize);
   const depthPressure = depthDanger * GAME_CONFIG.world.depthCellDensityBonus;
 
-  if (caveBias >= GAME_CONFIG.world.caveCoreBias) {
+  if (fieldBias >= GAME_CONFIG.world.tunnelCoreThreshold) {
     return Math.min(0.22, 0.04 * sizePressure + depthPressure * 0.12);
   }
-  if (caveBias <= GAME_CONFIG.world.caveWallBias) {
+  if (fieldBias <= GAME_CONFIG.world.tunnelWallThreshold) {
     return Math.min(1, 0.85 + sizePressure * 0.15 + depthPressure * 0.1);
   }
 
-  const transition = (GAME_CONFIG.world.caveCoreBias - caveBias) / (GAME_CONFIG.world.caveCoreBias - GAME_CONFIG.world.caveWallBias);
+  const transition = (GAME_CONFIG.world.tunnelCoreThreshold - fieldBias) / (GAME_CONFIG.world.tunnelCoreThreshold - GAME_CONFIG.world.tunnelWallThreshold);
   return Math.min(1, 0.28 + transition * 0.48 + sizePressure * 0.18 + depthPressure);
 }

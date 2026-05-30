@@ -17,7 +17,7 @@ export function placeMines(cells: LeafCell[], portals: Portal[], rng: SeededRand
   const candidates = cells
     .filter((cell) => cell.kind !== 'obstacle')
     .filter((cell) => !portals.some((portal) => intersectsAabb(cell.bounds, portal.bounds)))
-    .sort((a, b) => a.caveBias - b.caveBias);
+    .sort((a, b) => a.fieldBias - b.fieldBias);
 
   for (const cell of candidates) {
     if (mines.length >= GAME_CONFIG.mines.maxPerChunk) {

@@ -57,6 +57,10 @@ export class Hud {
   private readonly debugTimings = document.createElement('div');
   private readonly debugTuning = document.createElement('div');
   private readonly debugBoids = document.createElement('div');
+  private readonly debugShipLabel = document.createElement('div');
+  private readonly debugPerfLabel = document.createElement('div');
+  private readonly debugTuneLabel = document.createElement('div');
+  private readonly debugBoidLabel = document.createElement('div');
   private readonly keyHints = document.createElement('div');
 
   private readonly restartButton = document.createElement('button');
@@ -126,11 +130,19 @@ export class Hud {
     playerCard.append(gauges);
 
     this.debugPanel.className = 'debug-panel';
-    this.debugContent.className = 'debug-content';
+    this.debugContent.className = 'debug-line';
     this.debugTimings.className = 'debug-line';
     this.debugTuning.className = 'debug-line';
     this.debugBoids.className = 'debug-line';
-    this.debugPanel.append(this.fpsPanel.root, this.debugContent, this.debugTimings, this.debugTuning, this.debugBoids);
+    this.debugShipLabel.className = 'debug-label';
+    this.debugShipLabel.textContent = 'SHIP';
+    this.debugPerfLabel.className = 'debug-label';
+    this.debugPerfLabel.textContent = 'PERF';
+    this.debugTuneLabel.className = 'debug-label';
+    this.debugTuneLabel.textContent = 'TUNE';
+    this.debugBoidLabel.className = 'debug-label';
+    this.debugBoidLabel.textContent = 'BOID';
+    this.debugPanel.append(this.fpsPanel.root, this.debugShipLabel, this.debugContent, this.debugPerfLabel, this.debugTimings, this.debugTuneLabel, this.debugTuning, this.debugBoidLabel, this.debugBoids);
 
     this.keyHints.className = 'key-hints';
     this.keyHints.textContent = 'Z debug  U this panel  C chunks  F fog  R restart  +/- accel  [/] drag  ;/\' turn  P pause  B autopilot';

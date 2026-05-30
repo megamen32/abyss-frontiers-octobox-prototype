@@ -12,6 +12,8 @@ import { placeLoot } from './loot';
 import { placeMines } from './mines';
 import { buildGreedyStaticMesh } from './greedyMesher';
 import { detectCaveChunk, generateCaveChunkData } from './caveSystem';
+import { wrapChunkCoord } from '../utils/worldTopology';
+import { depthBelowSurface } from '../utils/depth';
 
 export class ChunkGenerator {
   constructor(private readonly globalSeed: number) {}
@@ -29,9 +31,10 @@ export class ChunkGenerator {
     } = {},
   ): { chunk: ChunkData; timings: ChunkBuildTimings } {
     const totalStart = performance.now();
-    const bounds = chunkBounds(coord);
-    const seed = chunkSeed(this.globalSeed, coord);
-    const portals = generatePortals(this.globalSeed, coord, bounds);
+    const wrappedCoord = wrapChunkCoord(coord);
+    const bounds = chunkBounds(wrappedCoord);
+    const seed = chunkSeed(this.globalSeed, wrappedCoord);
+    const portals = generatePortals(this.globalSeed, wrappedCoord, bounds);
 
     const caveEntrance = options.forceCaveEntranceFace
       ? {
@@ -42,15 +45,15 @@ export class ChunkGenerator {
             options.forceCaveEntranceFace,
           ),
         }
-      : detectCaveChunk(this.globalSeed, coord);
+      : detectCaveChunk(this.globalSeed, wrappedCoord);
     if (caveEntrance) {
       const caveStart = performance.now();
       const entranceRadius = options.forceCaveEntranceFace ? GAME_CONFIG.blackHole.entranceRadius : undefined;
-      const caveResult = generateCaveChunkData(coord, bounds, portals, caveEntrance, entranceRadius, options.forceCaveClusterCenter, options.forceCaveMouthRadiusChunks);
+      const caveResult = generateCaveChunkData(wrappedCoord, bounds, portals, caveEntrance, entranceRadius, options.forceCaveClusterCenter, options.forceCaveMouthRadiusChunks);
       const caveMs = performance.now() - caveStart;
       const chunk: ChunkData = {
-        key: chunkKey(coord),
-        coord,
+        key: chunkKey(wrappedCoord),
+        coord: wrappedCoord,
         seed,
         isCaveChunk: true,
         caveEntranceCenter: caveResult.entranceCenter ? { x: caveResult.entranceCenter.x, y: caveResult.entranceCenter.y, z: caveResult.entranceCenter.z } : undefined,
@@ -99,8 +102,7 @@ export class ChunkGenerator {
     }
 
     const obstaclesStart = performance.now();
-    // Surface and above — keep completely clear so the player can exit the water freely.
-    const obstacles = coord.y >= 0 ? [] : placeObstacles(cells, portals, rng);
+    const obstacles = depthBelowSurface(bounds.max.y) <= 0 ? [] : placeObstacles(cells, portals, rng);
     const obstaclesMs = performance.now() - obstaclesStart;
     const staticMeshStart = performance.now();
     const staticMeshData = buildGreedyStaticMesh(
@@ -117,7 +119,7 @@ export class ChunkGenerator {
     const loot = placeLoot(cells, portals, rng);
     const lootMs = performance.now() - lootStart;
     const minesStart = performance.now();
-    const mines = placeMines(cells, portals, rng, chunkKey(coord));
+    const mines = placeMines(cells, portals, rng, chunkKey(wrappedCoord));
     const minesMs = performance.now() - minesStart;
     const adjacency = adjacencyAll.filter(([a, b]) => freeIds.has(a) && freeIds.has(b));
 
@@ -129,8 +131,8 @@ export class ChunkGenerator {
     }
 
     const chunk: ChunkData = {
-      key: chunkKey(coord),
-      coord,
+      key: chunkKey(wrappedCoord),
+      coord: wrappedCoord,
       seed,
       isCaveChunk: false,
       bounds,

@@ -4,7 +4,7 @@ export type Face = 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz';
 export type ObstacleType = 'sphere' | 'box';
 export type ObstacleMotion = 'static' | 'slow_rotate' | 'linear_drift';
 export type CellKind = 'free' | 'obstacle' | 'empty';
-export type GenerationMode = 'scatter' | 'cave';
+export type GenerationProfile = 'scatter' | 'tunnel_field';
 export type MineState = 'idle' | 'targeting' | 'launched' | 'dead' | 'rocket';
 export type GauntletType =
   | 'left_passage'
@@ -73,7 +73,17 @@ export interface LeafCell {
   depth: number;
   bounds: AABB;
   kind: CellKind;
-  caveBias: number;
+  fieldBias: number;
+}
+
+export interface WorldFieldSample {
+  density: number;
+  clearance: number;
+  danger: number;
+  spawnWeight: number;
+  profileId: GenerationProfile;
+  avoidance: Vector3;
+  fieldBias: number;
 }
 
 export interface Obstacle {

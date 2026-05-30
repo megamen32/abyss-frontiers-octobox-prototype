@@ -22,7 +22,7 @@ function makeCell(id: string, minX: number, minY: number, minZ: number, maxX: nu
     depth: 0,
     bounds: makeBounds(minX, minY, minZ, maxX, maxY, maxZ),
     kind: 'free',
-    caveBias: 0.5,
+    fieldBias: 0.5,
   }
 }
 

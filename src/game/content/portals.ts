@@ -4,6 +4,7 @@ import type { AABB, ChunkCoord, Face, Portal } from '../types';
 import { faceSeed } from '../utils/hash';
 import { SeededRandom } from '../utils/rng';
 import { chunkKey } from '../utils/chunk';
+import { wrapChunkCoord } from '../utils/worldTopology';
 
 const FACE_DATA: Record<Face, { normal: Vector3; axis: 'x' | 'y' | 'z' }> = {
   px: { normal: new Vector3(1, 0, 0), axis: 'x' },
@@ -27,11 +28,11 @@ export function generatePortals(globalSeed: number, coord: ChunkCoord, bounds: A
     const b = rng.range(inset, size - inset);
     const center = bounds.min.clone();
     const normal = FACE_DATA[face].normal;
-    const neighbor = {
+    const neighbor = wrapChunkCoord({
       x: coord.x + normal.x,
       y: coord.y + normal.y,
       z: coord.z + normal.z,
-    };
+    });
 
     switch (face) {
       case 'px':
