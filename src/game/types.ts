@@ -166,6 +166,7 @@ export interface ChunkBuildTimings {
   totalMs: number;
   octoboxMs: number;
   octoboxFieldSampleMs?: number;
+  octoboxSkeletonCandidatesTested?: number;
   octoboxSplitPointsMs?: number;
   octoboxNodesVisited?: number;
   octoboxLeavesGenerated?: number;

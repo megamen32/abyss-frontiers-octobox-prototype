@@ -87,6 +87,7 @@ export class ChunkGenerator {
     const rng = new SeededRandom(seed);
     const octoboxProfile = {
       fieldSampleMs: 0,
+      skeletonCandidatesTested: 0,
       splitPointsMs: 0,
       nodesVisited: 0,
       leavesGenerated: 0,
@@ -165,6 +166,7 @@ export class ChunkGenerator {
           totalMs: performance.now() - totalStart,
           octoboxMs,
           octoboxFieldSampleMs: octoboxProfile.fieldSampleMs,
+          octoboxSkeletonCandidatesTested: octoboxProfile.skeletonCandidatesTested,
           octoboxSplitPointsMs: octoboxProfile.splitPointsMs,
           octoboxNodesVisited: octoboxProfile.nodesVisited,
           octoboxLeavesGenerated: octoboxProfile.leavesGenerated,

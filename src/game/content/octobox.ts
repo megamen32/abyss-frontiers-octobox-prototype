@@ -5,8 +5,11 @@ import { SeededRandom } from '../utils/rng';
 import { worldDangerLevel } from '../utils/depth';
 import { sampleWorldField } from './worldField';
 
+const _center = new Vector3();
+
 export interface OctoboxProfile {
   fieldSampleMs: number;
+  skeletonCandidatesTested: number;
   splitPointsMs: number;
   nodesVisited: number;
   leavesGenerated: number;
@@ -18,6 +21,7 @@ export function generateOctoBoxLeaves(bounds: AABB, seed: number, profile?: Octo
   const leaves: LeafCell[] = [];
   if (profile) {
     profile.fieldSampleMs = 0;
+    profile.skeletonCandidatesTested = 0;
     profile.splitPointsMs = 0;
     profile.nodesVisited = 0;
     profile.leavesGenerated = 0;
@@ -45,7 +49,7 @@ function split(
   const size = bounds.max.clone().sub(bounds.min);
   const minSize = Math.min(size.x, size.y, size.z);
   const fieldSampleStart = profile ? performance.now() : 0;
-  const fieldBias = computeFieldBias(bounds, seed);
+  const fieldBias = computeFieldBias(bounds, seed, profile);
   if (profile) {
     profile.fieldSampleMs += performance.now() - fieldSampleStart;
   }
@@ -137,9 +141,13 @@ function getMaxLeafSize(): number {
   return shipDiameter * GAME_CONFIG.world.octoboxMaxCellSizeMultiplier;
 }
 
-function computeFieldBias(bounds: AABB, seed: number): number {
-  const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5);
-  return sampleWorldField(center, seed).fieldBias;
+function computeFieldBias(bounds: AABB, seed: number, profile?: OctoboxProfile): number {
+  _center.set(
+    (bounds.min.x + bounds.max.x) * 0.5,
+    (bounds.min.y + bounds.max.y) * 0.5,
+    (bounds.min.z + bounds.max.z) * 0.5,
+  );
+  return sampleWorldField(_center, seed, profile).fieldBias;
 }
 
 function estimateDensity(bounds: AABB, fieldBias: number): number {

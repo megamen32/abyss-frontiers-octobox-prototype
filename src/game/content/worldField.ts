@@ -3,12 +3,12 @@ import { GAME_CONFIG } from '../config';
 import type { WorldFieldSample } from '../types';
 import { hashInts } from '../utils/hash';
 import { worldDangerLevel } from '../utils/depth';
-import { sampleWorldSkeleton } from './worldSkeleton';
+import { sampleWorldSkeletonField, type WorldSkeletonProfile } from './worldSkeleton';
 
 const _gradientStep = GAME_CONFIG.world.meshStepNear;
 
-export function sampleWorldField(position: Vector3, seed: number = GAME_CONFIG.seed): WorldFieldSample {
-  const skeleton = sampleWorldSkeleton(position, seed);
+export function sampleWorldField(position: Vector3, seed: number = GAME_CONFIG.seed, profile?: WorldSkeletonProfile): WorldFieldSample {
+  const skeleton = sampleWorldSkeletonField(position, seed, profile);
   const noise = valueNoise(position, seed);
   const radius = skeleton.radius * (0.86 + noise * 0.28);
   const clearance = radius - skeleton.distance;
@@ -42,7 +42,7 @@ export function sampleAvoidanceVector(position: Vector3, seed: number = GAME_CON
 }
 
 function sampleClearance(position: Vector3, seed: number): number {
-  const skeleton = sampleWorldSkeleton(position, seed);
+  const skeleton = sampleWorldSkeletonField(position, seed);
   const noise = valueNoise(position, seed);
   return skeleton.radius * (0.86 + noise * 0.28) - skeleton.distance;
 }

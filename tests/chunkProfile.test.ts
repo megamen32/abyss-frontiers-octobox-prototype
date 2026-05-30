@@ -99,6 +99,7 @@ describe('Chunk profiling', () => {
         `${entry.label}: totalMs avg=${entry.averages.totalMs.toFixed(2)} max=${entry.maximums.totalMs.toFixed(2)}`
         + ` octobox avg=${entry.averages.octoboxMs.toFixed(2)}`
         + ` field avg=${entry.averages.octoboxFieldSampleMs.toFixed(2)}`
+        + ` skelCandidates avg=${entry.averages.octoboxSkeletonCandidatesTested.toFixed(0)}`
         + ` split avg=${entry.averages.octoboxSplitPointsMs.toFixed(2)}`
         + ` adjacency avg=${entry.averages.adjacencyBuildMs.toFixed(2)}`
         + ` pairs avg=${entry.averages.adjacencyPairsTested.toFixed(0)}`
@@ -146,6 +147,7 @@ function summarize(samples: ChunkProfileSample[]): ChunkProfileSummary[] {
     'totalMs',
     'octoboxMs',
     'octoboxFieldSampleMs',
+    'octoboxSkeletonCandidatesTested',
     'octoboxSplitPointsMs',
     'octoboxNodesVisited',
     'octoboxLeavesGenerated',
@@ -195,6 +197,7 @@ function readMetric(
   key: 'totalMs'
     | 'octoboxMs'
     | 'octoboxFieldSampleMs'
+    | 'octoboxSkeletonCandidatesTested'
     | 'octoboxSplitPointsMs'
     | 'octoboxNodesVisited'
     | 'octoboxLeavesGenerated'

@@ -1,4 +1,4 @@
-import { MathUtils, Vector3 } from 'three';
+import { Vector3 } from 'three';
 import { GAME_CONFIG } from '../config';
 import type { ChunkCoord } from '../types';
 import { hashInts } from '../utils/hash';
@@ -23,10 +23,42 @@ export interface WorldSkeletonSample {
   radius: number;
 }
 
+export interface WorldSkeletonFieldSample {
+  distance: number;
+  radius: number;
+}
+
+export interface WorldSkeletonProfile {
+  skeletonCandidatesTested: number;
+}
+
+interface SkeletonCandidateSet {
+  nodes: SkeletonNode[];
+  edges: SkeletonEdgeRef[];
+}
+
+interface SkeletonEdgeRef {
+  edge: SkeletonEdge;
+  sx: number;
+  sy: number;
+  sz: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  lenSq: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+}
+
 const _nearest = new Vector3();
 const _candidate = new Vector3();
 const nodeCache = new Map<string, SkeletonNode>();
 const edgeCache = new Map<string, SkeletonEdge[]>();
+const candidateCache = new Map<string, SkeletonCandidateSet>();
 
 export function skeletonMacroCellSize(): number {
   return WORLD_SIZE / GAME_CONFIG.world.skeletonMacroCellsPerAxis;
@@ -92,29 +124,49 @@ export function skeletonEdgesForMacroCoord(coord: ChunkCoord, seed: number): Ske
   return result;
 }
 
-export function sampleWorldSkeleton(position: Vector3, seed: number): WorldSkeletonSample {
+export function sampleWorldSkeleton(position: Vector3, seed: number, profile?: WorldSkeletonProfile): WorldSkeletonSample {
+  const sample = sampleWorldSkeletonInternal(position, seed, profile);
+  return {
+    nearestPoint: sample.nearestPoint.clone(),
+    distance: sample.distance,
+    radius: sample.radius,
+  };
+}
+
+export function sampleWorldSkeletonField(position: Vector3, seed: number, profile?: WorldSkeletonProfile): WorldSkeletonFieldSample {
+  const sample = sampleWorldSkeletonInternal(position, seed, profile);
+  return {
+    distance: sample.distance,
+    radius: sample.radius,
+  };
+}
+
+function sampleWorldSkeletonInternal(position: Vector3, seed: number, profile?: WorldSkeletonProfile): WorldSkeletonSample {
   const macro = skeletonMacroCoordForPosition(position);
+  const candidates = skeletonCandidatesForMacroCoord(macro, seed);
   let bestDistanceSq = Number.POSITIVE_INFINITY;
   let bestRadius = GAME_CONFIG.world.chunkSize * 3;
   _nearest.copy(position);
 
-  for (let x = -1; x <= 1; x += 1) {
-    for (let y = -1; y <= 1; y += 1) {
-      for (let z = -1; z <= 1; z += 1) {
-        const coord = wrapSkeletonCoord({ x: macro.x + x, y: macro.y + y, z: macro.z + z });
-        const node = skeletonNodeAt(coord, seed);
-        considerPoint(position, node.position, node.radius);
-        const edges = skeletonEdgesForMacroCoord(coord, seed);
-        for (const edge of edges) {
-          closestPointOnWrappedSegment(_candidate, position, edge.a.position, edge.b.position);
-          considerPoint(position, _candidate, edge.radius);
-        }
-      }
+  for (const node of candidates.nodes) {
+    if (profile) {
+      profile.skeletonCandidatesTested += 1;
     }
+    considerPoint(position, node.position, node.radius);
+  }
+  for (const edge of candidates.edges) {
+    if (distanceSqToPreparedSegmentBounds(position, edge) >= bestDistanceSq) {
+      continue;
+    }
+    if (profile) {
+      profile.skeletonCandidatesTested += 1;
+    }
+    closestPointOnPreparedSegment(_candidate, position, edge);
+    considerPoint(position, _candidate, edge.edge.radius);
   }
 
   return {
-    nearestPoint: _nearest.clone(),
+    nearestPoint: _nearest,
     distance: Math.sqrt(bestDistanceSq),
     radius: bestRadius,
   };
@@ -127,6 +179,76 @@ export function sampleWorldSkeleton(position: Vector3, seed: number): WorldSkele
       _nearest.copy(candidate);
     }
   }
+}
+
+function skeletonCandidatesForMacroCoord(macro: ChunkCoord, seed: number): SkeletonCandidateSet {
+  const wrapped = wrapSkeletonCoord(macro);
+  const key = `candidates:${nodeCacheKey(seed, wrapped)}`;
+  const cached = candidateCache.get(key);
+  if (cached) return cached;
+  const nodes: SkeletonNode[] = [];
+  const edges: SkeletonEdgeRef[] = [];
+  const nodeIds = new Set<number>();
+  const edgeKeys = new Set<string>();
+
+  for (let x = -1; x <= 1; x += 1) {
+    for (let y = -1; y <= 1; y += 1) {
+      for (let z = -1; z <= 1; z += 1) {
+        const coord = wrapSkeletonCoord({ x: wrapped.x + x, y: wrapped.y + y, z: wrapped.z + z });
+        const node = skeletonNodeAt(coord, seed);
+        if (!nodeIds.has(node.id)) {
+          nodeIds.add(node.id);
+          nodes.push(node);
+        }
+        for (const edge of skeletonEdgesForMacroCoord(coord, seed)) {
+          const edgeKey = edge.a.id <= edge.b.id ? `${edge.a.id}:${edge.b.id}` : `${edge.b.id}:${edge.a.id}`;
+          if (edgeKeys.has(edgeKey)) {
+            continue;
+          }
+          edgeKeys.add(edgeKey);
+          edges.push(prepareEdge(edge));
+        }
+      }
+    }
+  }
+
+  const candidates = { nodes, edges };
+  candidateCache.set(key, candidates);
+  return candidates;
+}
+
+function prepareEdge(edge: SkeletonEdge): SkeletonEdgeRef {
+  const sx = edge.a.position.x;
+  const sy = edge.a.position.y;
+  const sz = edge.a.position.z;
+  const ex = unwrapAxis(edge.b.position.x, sx);
+  const ey = unwrapAxis(edge.b.position.y, sy);
+  const ez = unwrapAxis(edge.b.position.z, sz);
+  const vx = ex - sx;
+  const vy = ey - sy;
+  const vz = ez - sz;
+  const minX = Math.min(sx, ex);
+  const maxX = Math.max(sx, ex);
+  const minY = Math.min(sy, ey);
+  const maxY = Math.max(sy, ey);
+  const minZ = Math.min(sz, ez);
+  const maxZ = Math.max(sz, ez);
+  return {
+    edge,
+    sx,
+    sy,
+    sz,
+    vx,
+    vy,
+    vz,
+    lenSq: vx * vx + vy * vy + vz * vz,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    minZ,
+    maxZ,
+  };
 }
 
 export function isSkeletonGraphConnected(): boolean {
@@ -222,25 +344,44 @@ function axisSalt(axis: 'x' | 'y' | 'z'): number {
   return 47;
 }
 
-function closestPointOnWrappedSegment(out: Vector3, point: Vector3, start: Vector3, end: Vector3): Vector3 {
-  const sx = start.x;
-  const sy = start.y;
-  const sz = start.z;
-  const ex = unwrapAxis(end.x, sx);
-  const ey = unwrapAxis(end.y, sy);
-  const ez = unwrapAxis(end.z, sz);
-  const px = unwrapAxis(point.x, sx);
-  const py = unwrapAxis(point.y, sy);
-  const pz = unwrapAxis(point.z, sz);
-  const vx = ex - sx;
-  const vy = ey - sy;
-  const vz = ez - sz;
-  const lenSq = vx * vx + vy * vy + vz * vz;
-  if (lenSq <= 0.000001) {
-    return out.copy(start);
+function closestPointOnPreparedSegment(out: Vector3, point: Vector3, edge: SkeletonEdgeRef): Vector3 {
+  if (edge.lenSq <= 0.000001) {
+    return out.copy(edge.edge.a.position);
   }
-  const t = MathUtils.clamp(((px - sx) * vx + (py - sy) * vy + (pz - sz) * vz) / lenSq, 0, 1);
-  return out.set(wrapAxis(sx + vx * t), wrapAxis(sy + vy * t), wrapAxis(sz + vz * t));
+  const px = unwrapAxis(point.x, edge.sx);
+  const py = unwrapAxis(point.y, edge.sy);
+  const pz = unwrapAxis(point.z, edge.sz);
+  let t = ((px - edge.sx) * edge.vx + (py - edge.sy) * edge.vy + (pz - edge.sz) * edge.vz) / edge.lenSq;
+  if (t < 0) {
+    t = 0;
+  } else if (t > 1) {
+    t = 1;
+  }
+  return out.set(
+    wrapAxis(edge.sx + edge.vx * t),
+    wrapAxis(edge.sy + edge.vy * t),
+    wrapAxis(edge.sz + edge.vz * t),
+  );
+}
+
+function distanceSqToPreparedSegmentBounds(point: Vector3, edge: SkeletonEdgeRef): number {
+  const px = unwrapAxis(point.x, edge.sx);
+  const py = unwrapAxis(point.y, edge.sy);
+  const pz = unwrapAxis(point.z, edge.sz);
+  const dx = axisDistanceToRange(px, edge.minX, edge.maxX);
+  const dy = axisDistanceToRange(py, edge.minY, edge.maxY);
+  const dz = axisDistanceToRange(pz, edge.minZ, edge.maxZ);
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function axisDistanceToRange(value: number, min: number, max: number): number {
+  if (value < min) {
+    return min - value;
+  }
+  if (value > max) {
+    return value - max;
+  }
+  return 0;
 }
 
 function wrappedDistanceSq(a: Vector3, b: Vector3): number {
