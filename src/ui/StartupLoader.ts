@@ -2,8 +2,8 @@ import '../loading.css';
 
 export class StartupLoader {
   readonly root = document.createElement('div');
-  private readonly subtitle = document.createElement('div');
-  private startedAt = performance.now();
+  private readonly subtitle: HTMLDivElement;
+  private readonly startedAt = performance.now();
   private done = false;
 
   constructor(parent: HTMLElement) {
@@ -19,14 +19,14 @@ export class StartupLoader {
         </svg>
         <div class="loader-title">Abyss</div>
         <div class="loader-subtitle">building octree terrain</div>
-        <div class="loader-bar" />
+        <div class="loader-bar"></div>
       </div>
     `;
     const subtitle = this.root.querySelector('.loader-subtitle');
-    if (subtitle instanceof HTMLDivElement) {
-      this.subtitle.replaceWith(subtitle);
-      (this as { subtitle: HTMLDivElement }).subtitle = subtitle;
+    if (!(subtitle instanceof HTMLDivElement)) {
+      throw new Error('Startup loader subtitle not found');
     }
+    this.subtitle = subtitle;
     parent.append(this.root);
   }
 
