@@ -130,24 +130,38 @@ export class ChunkManager {
     const noSpawnDist = fogVisibilityDistance() * 0.7;
     const noSpawnDistSq = noSpawnDist * noSpawnDist;
     const readyQueueStart = performance.now();
+    const deferred: ChunkData[] = [];
     while (this.readyQueue.length > 0) {
       const chunk = this.readyQueue.shift();
       if (!chunk || !keepAlive.has(chunk.key) || this.activeChunks.has(chunk.key)) {
         continue;
       }
-      const cx = (chunk.bounds.min.x + chunk.bounds.max.x) * 0.5;
-      const cy = (chunk.bounds.min.y + chunk.bounds.max.y) * 0.5;
-      const cz = (chunk.bounds.min.z + chunk.bounds.max.z) * 0.5;
-      const delta = shortestWrappedDelta(position, new Vector3(cx, cy, cz));
-      const dx = delta.x;
-      const dy = delta.y;
-      const dz = delta.z;
-      if (dx * dx + dy * dy + dz * dz < noSpawnDistSq) {
-        continue;
+
+      // Frustum-visible and current chunks must become active immediately. The old near-player
+      // guard was safe for cosmetic props, but for terrain/octree chunks it could drop the start
+      // area and leave visible holes under the ship until the player moved into another chunk.
+      const isWantedNow = wanted.has(chunk.key);
+      const isCurrentChunk = chunk.key === chunkKey(currentCoord);
+      const isForcedCave = forcedCaves.has(chunk.key);
+      const visibleBand = options.viewFrustum ? getChunkVisibilityBand(chunk.bounds, options.viewFrustum) : 'partial';
+      const inFrustum = visibleBand !== 'outside';
+      if (!isWantedNow && !isCurrentChunk && !isForcedCave && !inFrustum) {
+        const cx = (chunk.bounds.min.x + chunk.bounds.max.x) * 0.5;
+        const cy = (chunk.bounds.min.y + chunk.bounds.max.y) * 0.5;
+        const cz = (chunk.bounds.min.z + chunk.bounds.max.z) * 0.5;
+        const delta = shortestWrappedDelta(position, new Vector3(cx, cy, cz));
+        const dx = delta.x;
+        const dy = delta.y;
+        const dz = delta.z;
+        if (dx * dx + dy * dy + dz * dz < noSpawnDistSq) {
+          deferred.push(chunk);
+          continue;
+        }
       }
       this.activeChunks.set(chunk.key, chunk);
       added.push(chunk);
     }
+    this.readyQueue.push(...deferred);
     this.debugTimings.readyQueueMs = smoothTiming(this.debugTimings.readyQueueMs, performance.now() - readyQueueStart);
 
     return { added, removed, currentCoord };
